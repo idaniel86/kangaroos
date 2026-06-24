@@ -62,24 +62,56 @@ global_asm!(
     "    bx    lr",                   // valid EXC_RETURN from Handler mode → task runs
 );
 
-/// Returns `TASKS[0].sp`; called from the SVCall stub.
+/// Selects and activates the first task at launch; called from the SVCall stub.
+///
+/// Finds the highest-priority ready task (lowest-index tie-break), marks it
+/// `Running`, stores its index in `CURRENT_TASK`, and returns its SP so the
+/// SVCall assembly can restore its context.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn svc_first_task_sp() -> usize {
-    unsafe { crate::TASKS[0].sp }
+    unsafe {
+        use crate::kernel::tcb::TaskState;
+
+        let count = crate::TASK_COUNT;
+        let mut best_prio = u8::MAX;
+        let mut best_idx = 0usize;
+
+        for i in 0..count {
+            let t = &crate::TASKS[i];
+            if matches!(t.state, TaskState::Ready) && t.priority < best_prio {
+                best_prio = t.priority;
+                best_idx = i;
+            }
+        }
+
+        crate::CURRENT_TASK = best_idx;
+        crate::TASKS[best_idx].state = TaskState::Running;
+        crate::TASKS[best_idx].sp
+    }
 }
 
 /// Called from the PendSV stub (AAPCS: r0 = arg, r0 = return value).
 ///
-/// Saves the current SP, advances the round-robin counter, and returns the
-/// next task's SP.
+/// Saves the current task's SP, transitions its state (Running → Ready, or
+/// leaves Blocked/Sleeping unchanged), selects the next task via the priority
+/// scheduler, marks it Running, and returns its SP.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn pendsv_save_and_switch(current_sp: usize) -> usize {
     unsafe {
+        use crate::kernel::tcb::TaskState;
+
         let old = crate::CURRENT_TASK;
         crate::TASKS[old].sp = current_sp;
 
-        let next = (old + 1) % crate::TASK_COUNT;
+        // Running → Ready so find_next() can re-select it.
+        // Blocked / Sleeping tasks keep their state (not re-queued).
+        if crate::TASKS[old].state == TaskState::Running {
+            crate::TASKS[old].state = TaskState::Ready;
+        }
+
+        let next = crate::kernel::scheduler::find_next();
         crate::CURRENT_TASK = next;
+        crate::TASKS[next].state = TaskState::Running;
 
         crate::TASKS[next].sp
     }

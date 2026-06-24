@@ -1,4 +1,3 @@
-#[cfg(any(armv7m, armv7em))]
 /// Architecture abstraction — implemented by every supported Cortex-M variant.
 ///
 /// All methods are free functions (no `self`) because the arch structs are
@@ -15,10 +14,40 @@ pub(crate) trait ArchContext {
     /// software save frame.
     fn stack_init(stack: &mut [u32], entry: fn() -> !) -> usize;
 
+    /// Write the stack-overflow canary pattern (`0xDEAD_BEEF` × 4) to the
+    /// bottom four words of the stack. Called by `spawn_task` before
+    /// `stack_init` so the canary is in place before the task ever runs.
+    fn canary_init(stack: &mut [u32]) {
+        const CANARY: u32 = 0xDEAD_BEEF;
+        stack[0] = CANARY;
+        stack[1] = CANARY;
+        stack[2] = CANARY;
+        stack[3] = CANARY;
+    }
+
+    /// Return `true` if the canary at `stack_base` is intact.
+    ///
+    /// Checked once per SysTick in `systick_handler`. A `false` return means
+    /// the task has overflowed its stack.
+    ///
+    /// # Safety (internal)
+    /// `stack_base` must be the start address of a live `'static` stack slice;
+    /// the first four words are always mapped and accessible.
+    fn canary_check(stack_base: usize) -> bool {
+        const CANARY: u32 = 0xDEAD_BEEF;
+        // SAFETY: stack_base was recorded from a &'static mut [u32] in
+        // spawn_task and is valid for the lifetime of the program.
+        unsafe {
+            let p = stack_base as *const u32;
+            *p == CANARY
+                && *p.add(1) == CANARY
+                && *p.add(2) == CANARY
+                && *p.add(3) == CANARY
+        }
+    }
+
     // Future phases will add:
-    //   fn canary_init(stack: &mut [u32])     — Phase 2: write 0xDEAD_BEEF words
-    //   fn canary_check(tcb: &Tcb) -> bool    — Phase 2: verify canary in SysTick
-    //   fn mpu_guard(stack_base: *const u8)   — Phase 2: reprogram MPU guard region
+    //   fn mpu_guard(stack_base: *const u8)   — Phase 2+: reprogram MPU guard region
 }
 
 // ---------------------------------------------------------------------------
