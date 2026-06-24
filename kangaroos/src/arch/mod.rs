@@ -63,6 +63,9 @@ pub(crate) mod v7m;
 #[cfg(all(armv7em, has_fpu))]
 pub(crate) mod v7em_fpu;
 
+#[cfg(armv8m)]
+pub(crate) mod v8m;
+
 // Catch unsupported targets at compile time rather than silently producing a
 // binary with no scheduler code.
 #[cfg(not(any(armv6m, armv7m, armv7em, armv8m)))]
@@ -86,3 +89,6 @@ pub(crate) use v7m::V7m as Arch;
 
 #[cfg(all(armv7em, has_fpu))]
 pub(crate) use v7em_fpu::V7emFpu as Arch;
+
+#[cfg(armv8m)]
+pub(crate) use v8m::V8m as Arch;
