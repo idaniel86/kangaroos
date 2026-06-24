@@ -42,6 +42,17 @@ impl<const N: usize> Kernel<N> {
             // Register the always-ready idle task at the lowest priority.
             idle::register(self);
 
+            // Enable the FPU on Cortex-M4F / M7 by granting full access to
+            // CP10 and CP11 in the Coprocessor Access Control Register.
+            // Must be done before any VFP instruction (including vstmdb in PendSV).
+            #[cfg(has_fpu)]
+            {
+                const CPACR: *mut u32 = 0xE000_ED88 as *mut u32;
+                CPACR.write_volatile(CPACR.read_volatile() | (0xF << 20));
+                cortex_m::asm::dsb();
+                cortex_m::asm::isb();
+            }
+
             let mut p = cortex_m::Peripherals::steal();
 
             // PendSV must be the absolute lowest priority so it never splits a user ISR.

@@ -57,8 +57,11 @@ pub(crate) trait ArchContext {
 #[cfg(armv6m)]
 pub(crate) mod v6m;
 
-#[cfg(any(armv7m, armv7em))]
+#[cfg(any(armv7m, all(armv7em, not(has_fpu))))]
 pub(crate) mod v7m;
+
+#[cfg(all(armv7em, has_fpu))]
+pub(crate) mod v7em_fpu;
 
 // Catch unsupported targets at compile time rather than silently producing a
 // binary with no scheduler code.
@@ -78,5 +81,8 @@ compile_error!(
 #[cfg(armv6m)]
 pub(crate) use v6m::V6m as Arch;
 
-#[cfg(any(armv7m, armv7em))]
+#[cfg(any(armv7m, all(armv7em, not(has_fpu))))]
 pub(crate) use v7m::V7m as Arch;
+
+#[cfg(all(armv7em, has_fpu))]
+pub(crate) use v7em_fpu::V7emFpu as Arch;
