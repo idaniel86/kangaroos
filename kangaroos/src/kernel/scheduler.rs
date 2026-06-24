@@ -25,7 +25,7 @@ pub(crate) fn find_next() -> usize {
         // Pass 1: find the minimum (highest) priority among all Ready/Running tasks.
         let mut best_prio = u8::MAX;
         for i in 0..count {
-            let t = &crate::TASKS[i];
+            let t = crate::ktask(i);
             if matches!(t.state, TaskState::Ready | TaskState::Running)
                 && t.priority < best_prio
             {
@@ -38,7 +38,7 @@ pub(crate) fn find_next() -> usize {
         let start = (current + 1) % count;
         for offset in 0..count {
             let i = (start + offset) % count;
-            let t = &crate::TASKS[i];
+            let t = crate::ktask(i);
             if t.priority == best_prio
                 && matches!(t.state, TaskState::Ready | TaskState::Running)
             {
@@ -63,9 +63,9 @@ pub(crate) fn tick() -> bool {
 
         // Wake any tasks whose sleep deadline has passed.
         for i in 0..crate::TASK_COUNT {
-            if let TaskState::Sleeping(deadline) = crate::TASKS[i].state {
+            if let TaskState::Sleeping(deadline) = crate::ktask(i).state {
                 if now >= deadline {
-                    crate::TASKS[i].state = TaskState::Ready;
+                    crate::ktask(i).state = TaskState::Ready;
                 }
             }
         }
@@ -73,35 +73,35 @@ pub(crate) fn tick() -> bool {
         let current = crate::CURRENT_TASK;
 
         // Guard: scheduler not yet started (svc_first_task_sp has not run yet).
-        if !matches!(crate::TASKS[current].state, TaskState::Running) {
+        if !matches!(crate::ktask(current).state, TaskState::Running) {
             return false;
         }
 
-        let cur_prio = crate::TASKS[current].priority;
+        let cur_prio = crate::ktask(current).priority;
 
         // Preempt immediately if a higher-priority task has become ready.
         for i in 0..crate::TASK_COUNT {
             if i != current
-                && matches!(crate::TASKS[i].state, TaskState::Ready)
-                && crate::TASKS[i].priority < cur_prio
+                && matches!(crate::ktask(i).state, TaskState::Ready)
+                && crate::ktask(i).priority < cur_prio
             {
                 return true;
             }
         }
 
         // Decrement the running task's time slice.
-        let slice = crate::TASKS[current].slice_remaining;
+        let slice = crate::ktask(current).slice_remaining;
         if slice > 0 {
-            crate::TASKS[current].slice_remaining = slice - 1;
+            crate::ktask(current).slice_remaining = slice - 1;
         }
 
         // On slice expiry, rotate if an equal-priority peer is ready.
-        if crate::TASKS[current].slice_remaining == 0 {
-            crate::TASKS[current].slice_remaining = crate::TASKS[current].time_slice;
+        if crate::ktask(current).slice_remaining == 0 {
+            crate::ktask(current).slice_remaining = crate::ktask(current).time_slice;
             for i in 0..crate::TASK_COUNT {
                 if i != current
-                    && matches!(crate::TASKS[i].state, TaskState::Ready)
-                    && crate::TASKS[i].priority == cur_prio
+                    && matches!(crate::ktask(i).state, TaskState::Ready)
+                    && crate::ktask(i).priority == cur_prio
                 {
                     return true;
                 }

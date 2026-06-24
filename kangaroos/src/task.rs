@@ -4,23 +4,29 @@
 //! be called from interrupt handlers.
 
 use crate::arch::ArchContext as _;
-use crate::kernel::tcb::{TaskState, Tcb};
+use crate::kernel::{tcb::{TaskState, Tcb}, Kernel};
 
 /// Register a task with the given static priority (`0` = highest).
 ///
 /// The stack slice must have a `'static` lifetime (i.e. come from a
-/// `static mut` array). Safe to call both before `kernel_start` and after
-/// the scheduler is running (e.g. from another task).
-pub fn spawn(stack: &'static mut [u32], priority: u8, time_slice: u8, entry: fn() -> !) {
+/// `static mut` array). Call this before `kernel::start`, passing the same
+/// `Kernel<N>` instance.
+pub fn spawn<const N: usize>(
+    kernel: &mut Kernel<N>,
+    stack: &'static mut [u32],
+    priority: u8,
+    time_slice: u8,
+    entry: fn() -> !,
+) {
     cortex_m::interrupt::free(|_| unsafe {
         let idx = crate::TASK_COUNT;
-        assert!(idx < crate::MAX_TASKS, "maximum task count exceeded");
+        assert!(idx < N, "maximum task count exceeded");
 
         crate::arch::Arch::canary_init(stack);
         let sp = crate::arch::Arch::stack_init(stack, entry);
         let stack_base = stack.as_ptr() as usize;
 
-        crate::TASKS[idx] = Tcb {
+        kernel.tasks[idx] = Tcb {
             sp,
             state: TaskState::Ready,
             priority,
@@ -45,7 +51,7 @@ pub fn spawn(stack: &'static mut [u32], priority: u8, time_slice: u8, entry: fn(
 /// immediately.
 pub fn yield_now() {
     cortex_m::interrupt::free(|_| unsafe {
-        crate::TASKS[crate::CURRENT_TASK].slice_remaining = 0;
+        crate::ktask(crate::CURRENT_TASK).slice_remaining = 0;
     });
     cortex_m::peripheral::SCB::set_pendsv();
 }
@@ -57,7 +63,7 @@ pub fn yield_now() {
 pub fn current_priority() -> u8 {
     // SAFETY: CURRENT_TASK is only mutated by PendSV (Handler mode); this
     // read is effectively atomic on single-core Cortex-M.
-    unsafe { crate::TASKS[crate::CURRENT_TASK].priority }
+    unsafe { crate::ktask(crate::CURRENT_TASK).priority }
 }
 
 /// Terminate the current task.
@@ -69,7 +75,7 @@ pub fn current_priority() -> u8 {
 /// this; it is provided for completeness and one-shot task patterns.
 pub fn exit() -> ! {
     cortex_m::interrupt::free(|_| unsafe {
-        crate::TASKS[crate::CURRENT_TASK].state = TaskState::Blocked;
+        crate::ktask(crate::CURRENT_TASK).state = TaskState::Blocked;
     });
     cortex_m::peripheral::SCB::set_pendsv();
     loop {
