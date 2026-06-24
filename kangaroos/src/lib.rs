@@ -2,6 +2,7 @@
 
 pub mod arch;
 
+use arch::ArchContext as _;
 use cortex_m::peripheral::scb::SystemHandler;
 
 const MAX_TASKS: usize = 8;
@@ -28,7 +29,7 @@ pub fn spawn_task(stack: &'static mut [u32], entry: fn() -> !) {
     unsafe {
         let idx = TASK_COUNT;
         assert!(idx < MAX_TASKS, "maximum task count exceeded");
-        TASKS[idx].sp = arch::v7m::stack_init(stack, entry);
+        TASKS[idx].sp = arch::Arch::stack_init(stack, entry);
         TASK_COUNT += 1;
     }
 }

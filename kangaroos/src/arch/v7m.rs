@@ -1,5 +1,16 @@
 use core::arch::global_asm;
 
+use super::ArchContext;
+
+/// Zero-sized dispatch token for ARMv7-M (Cortex-M3 / M4 without FPU context).
+pub(crate) struct V7m;
+
+impl ArchContext for V7m {
+    fn stack_init(stack: &mut [u32], entry: fn() -> !) -> usize {
+        stack_init(stack, entry)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // PendSV — context switch handler (pure assembly)
 //
