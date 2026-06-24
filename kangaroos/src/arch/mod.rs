@@ -54,6 +54,9 @@ pub(crate) trait ArchContext {
 // Arch-specific modules (gated by custom cfgs emitted by build.rs)
 // ---------------------------------------------------------------------------
 
+#[cfg(armv6m)]
+pub(crate) mod v6m;
+
 #[cfg(any(armv7m, armv7em))]
 pub(crate) mod v7m;
 
@@ -71,6 +74,9 @@ compile_error!(
 // instead of a concrete module path, so adding a new variant only requires
 // changing this alias and adding a module.
 // ---------------------------------------------------------------------------
+
+#[cfg(armv6m)]
+pub(crate) use v6m::V6m as Arch;
 
 #[cfg(any(armv7m, armv7em))]
 pub(crate) use v7m::V7m as Arch;
