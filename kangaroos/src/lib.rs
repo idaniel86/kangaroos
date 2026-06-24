@@ -20,18 +20,25 @@ pub(crate) static mut TASKS: [Tcb; MAX_TASKS] = [Tcb { sp: 0 }; MAX_TASKS];
 pub(crate) static mut TASK_COUNT: usize = 0;
 pub(crate) static mut CURRENT_TASK: usize = 0;
 
-/// Register a task before the scheduler starts.
+/// Register a task. Safe to call both before `kernel_start` and after the
+/// scheduler is running (e.g. from another task).
 ///
-/// Tasks are launched in registration order; the first registered task runs
-/// first.  The stack slice must live for `'static` (i.e. come from a
-/// `static mut` array).
+/// The stack slice must live for `'static` (i.e. come from a `static mut`
+/// array).  Tasks are added to the round-robin ring and will be scheduled on
+/// the next context switch after registration.
 pub fn spawn_task(stack: &'static mut [u32], entry: fn() -> !) {
-    unsafe {
+    // Disable all maskable interrupts for the duration so that PendSV cannot
+    // fire between stack_init and the TASK_COUNT increment, and so that two
+    // concurrent callers cannot both read the same TASK_COUNT slot.
+    cortex_m::interrupt::free(|_| unsafe {
         let idx = TASK_COUNT;
         assert!(idx < MAX_TASKS, "maximum task count exceeded");
         TASKS[idx].sp = arch::Arch::stack_init(stack, entry);
+        // Release fence: all stack_init stores must be visible to PendSV
+        // before it can observe the incremented TASK_COUNT.
+        core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
         TASK_COUNT += 1;
-    }
+    });
 }
 
 /// Configure priorities, start SysTick, and launch the first task.
