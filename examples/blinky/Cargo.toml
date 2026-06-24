@@ -1,0 +1,14 @@
+[package]
+name = "blinky"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "blinky"
+test = false
+bench = false
+
+[dependencies]
+kangaroos = { path = "../../kangaroos" }
+cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7"
