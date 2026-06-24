@@ -22,8 +22,12 @@ pub(crate) struct Tcb {
     pub(crate) sp: usize,
     /// Execution state.
     pub(crate) state: TaskState,
-    /// Static priority: 0 = highest, `u8::MAX` = lowest (used by the idle task).
+    /// Effective (possibly PI-boosted) priority: 0 = highest, `u8::MAX` = lowest.
+    /// The scheduler always uses this field; `base_priority` stores the original.
     pub(crate) priority: u8,
+    /// Original spawn priority, never changed after initialisation.
+    /// `Mutex` restores `priority` to this value when the lock is released.
+    pub(crate) base_priority: u8,
     /// Configured time-slice quantum for this task in SysTick ticks.
     /// Reloaded into `slice_remaining` after each expiry.
     pub(crate) time_slice: u8,
@@ -33,6 +37,9 @@ pub(crate) struct Tcb {
     pub(crate) stack_base: usize,
     /// Optional human-readable name for debugging.
     pub(crate) name: &'static str,
+    /// Intrusive singly-linked wait-list next pointer.
+    /// `0xFF` means "end of list". Valid only while `state == Blocked`.
+    pub(crate) wait_next: u8,
 }
 
 impl Tcb {
@@ -42,10 +49,12 @@ impl Tcb {
             sp: 0,
             state: TaskState::Uninit,
             priority: 0,
+            base_priority: 0,
             time_slice: 0,
             slice_remaining: 0,
             stack_base: 0,
             name: "",
+            wait_next: 0xFF,
         }
     }
 }

@@ -111,3 +111,101 @@ pub(crate) fn tick() -> bool {
         false
     }
 }
+
+// ---------------------------------------------------------------------------
+// Sync-primitive helpers
+//
+// All four functions must be called with interrupts disabled (inside
+// `cortex_m::interrupt::free`). They manipulate TCB state and the intrusive
+// wait list but do **not** trigger PendSV — the caller is responsible for
+// calling `cortex_m::peripheral::SCB::set_pendsv()` after the critical
+// section when a context switch is needed.
+// ---------------------------------------------------------------------------
+
+/// Mark the currently running task as `Blocked`.
+///
+/// # Safety
+/// Must be called inside `interrupt::free`. The caller must trigger PendSV
+/// after leaving the critical section so the scheduler selects a new task.
+pub(crate) unsafe fn block_current() {
+    unsafe {
+        crate::ktask(crate::CURRENT_TASK).state = TaskState::Blocked;
+    }
+}
+
+/// Mark task `idx` as `Ready` and return whether PendSV should fire.
+///
+/// Returns `true` when the newly-ready task has a higher priority (lower
+/// number) than the currently running task, indicating that preemption is
+/// warranted. The caller must call `SCB::set_pendsv()` in that case.
+///
+/// # Safety
+/// Must be called inside `interrupt::free`.
+pub(crate) unsafe fn unblock(idx: usize) -> bool {
+    unsafe {
+        crate::ktask(idx).state = TaskState::Ready;
+        crate::ktask(idx).priority < crate::ktask(crate::CURRENT_TASK).priority
+    }
+}
+
+/// Prepend `task_idx` to the intrusive wait list rooted at `*head`.
+///
+/// O(1). The list is LIFO at insertion; priority ordering is enforced on
+/// removal by `wait_list_pop_highest`.
+///
+/// # Safety
+/// Must be called inside `interrupt::free`.
+pub(crate) unsafe fn wait_list_push(head: &mut u8, task_idx: usize) {
+    unsafe {
+        crate::ktask(task_idx).wait_next = *head;
+    }
+    *head = task_idx as u8;
+}
+
+/// Remove and return the highest-priority (lowest `priority` value) task
+/// from the wait list rooted at `*head`.
+///
+/// O(N waiters). Returns `usize::MAX` if the list is empty — callers should
+/// check `*head != 0xFF` before calling.
+///
+/// # Safety
+/// Must be called inside `interrupt::free`.
+pub(crate) unsafe fn wait_list_pop_highest(head: &mut u8) -> usize {
+    if *head == 0xFF {
+        return usize::MAX;
+    }
+
+    unsafe {
+        // Walk the list to find the entry with the smallest priority value.
+        let mut best_idx = *head as usize;
+        let mut best_prio = crate::ktask(best_idx).priority;
+        let mut cur = crate::ktask(best_idx).wait_next;
+        while cur != 0xFF {
+            let cur_idx = cur as usize;
+            let p = crate::ktask(cur_idx).priority;
+            if p < best_prio {
+                best_prio = p;
+                best_idx = cur_idx;
+            }
+            cur = crate::ktask(cur_idx).wait_next;
+        }
+
+        // Unlink `best_idx` from the list.
+        if *head as usize == best_idx {
+            *head = crate::ktask(best_idx).wait_next;
+        } else {
+            let mut prev = *head as usize;
+            loop {
+                let next = crate::ktask(prev).wait_next as usize;
+                if next == best_idx {
+                    crate::ktask(prev).wait_next = crate::ktask(best_idx).wait_next;
+                    break;
+                }
+                prev = next;
+            }
+        }
+
+        crate::ktask(best_idx).wait_next = 0xFF;
+        best_idx
+    }
+}

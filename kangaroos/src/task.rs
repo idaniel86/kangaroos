@@ -30,10 +30,12 @@ pub fn spawn<const N: usize>(
             sp,
             state: TaskState::Ready,
             priority,
+            base_priority: priority,
             time_slice,
             slice_remaining: time_slice,
             stack_base,
             name: "",
+            wait_next: 0xFF,
         };
 
         // Release fence: all stores above must be visible to PendSV before

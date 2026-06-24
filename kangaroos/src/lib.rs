@@ -2,6 +2,7 @@
 
 pub mod arch;
 pub(crate) mod kernel;
+pub mod sync;
 pub mod task;
 
 use kernel::tcb::Tcb;
