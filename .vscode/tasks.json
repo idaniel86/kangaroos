@@ -1,0 +1,41 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        // ── Build ──────────────────────────────────────────────────────────────
+        {
+            "label": "cargo build · blinky (thumbv7m)",
+            "type": "shell",
+            "command": "cargo build --target thumbv7m-none-eabi -p blinky",
+            "group": { "kind": "build", "isDefault": true },
+            "problemMatcher": ["$rustc"],
+            "presentation": { "reveal": "silent", "panel": "shared" }
+        },
+
+        // ── QEMU (used by the cppdbg attach config) ────────────────────────────
+        // Starts QEMU with its GDB stub on :1234 and freezes the CPU (-S) so
+        // GDB can connect before the first instruction runs.
+        // After launching this task, use the "attach to QEMU :1234" launch config.
+        {
+            "label": "QEMU · start blinky (lm3s811evb, port 1234)",
+            "type": "shell",
+            "command": "qemu-system-arm -M lm3s811evb -nographic -kernel ${workspaceFolder}/target/thumbv7m-none-eabi/debug/blinky -s -S",
+            "isBackground": true,
+            "problemMatcher": {
+                // QEMU has no well-known "ready" line, so we treat any output
+                // as the "begun" signal and never expect an "end" pattern.
+                "pattern": { "regexp": "^$" },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": ".*",
+                    "endsPattern":   "^__never__$"
+                }
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "clear": true,
+                "close": false
+            }
+        }
+    ]
+}

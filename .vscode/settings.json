@@ -1,0 +1,7 @@
+{
+    // Keep Rust errors in the Problems panel.
+    "rust-analyzer.checkOnSave": true,
+
+    // Default build target so rust-analyzer resolves the right cfg flags.
+    "rust-analyzer.cargo.target": "thumbv7m-none-eabi"
+}

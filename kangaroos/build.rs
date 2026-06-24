@@ -1,4 +1,12 @@
 fn main() {
+    // Declare all custom cfgs so rustc's check-cfg lint doesn't fire,
+    // regardless of which target is active in a given build.
+    println!("cargo::rustc-check-cfg=cfg(armv6m)");
+    println!("cargo::rustc-check-cfg=cfg(armv7m)");
+    println!("cargo::rustc-check-cfg=cfg(armv7em)");
+    println!("cargo::rustc-check-cfg=cfg(armv8m)");
+    println!("cargo::rustc-check-cfg=cfg(has_fpu)");
+
     let target = std::env::var("TARGET").unwrap();
 
     // Emit cfg flags based on the target triple so the kernel can use

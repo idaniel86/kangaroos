@@ -1,0 +1,50 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        // ── Primary: cortex-debug (install the "Cortex-Debug" VS Code extension) ──
+        // cortex-debug starts QEMU, attaches GDB, and gives a full register /
+        // peripheral view in the sidebar.
+        {
+            "name": "Debug blinky · QEMU (cortex-debug)",
+            "type": "cortex-debug",
+            "request": "launch",
+            "servertype": "qemu",
+            "executable": "${workspaceFolder}/target/thumbv7m-none-eabi/debug/blinky",
+            "cpu": "cortex-m3",
+            "machine": "lm3s811evb",
+            "preLaunchTask": "cargo build · blinky (thumbv7m)",
+            // Stop at main() so you can set breakpoints before tasks start.
+            "runToEntryPoint": "main",
+            "showDevDebugOutput": "none",
+            // Optional: add "svdFile" here when you have an SVD for register view.
+            "qemuargs": [
+                ["-nographic"]
+            ]
+        },
+
+        // ── Fallback: cppdbg (C/C++ extension, no cortex-debug needed) ──
+        // 1. Start QEMU manually (or via the "QEMU · start blinky" task below).
+        // 2. Then launch this config to attach GDB.
+        {
+            "name": "Debug blinky · attach to QEMU :1234 (cppdbg)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/thumbv7m-none-eabi/debug/blinky",
+            "miDebuggerPath": "${config:kangaroos.armGdbPath}",
+            "miDebuggerServerAddress": "localhost:1234",
+            "stopAtEntry": true,
+            "cwd": "${workspaceFolder}",
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                { "text": "set architecture armv7-m",     "ignoreFailures": false },
+                { "text": "set remotetimeout 10",         "ignoreFailures": false },
+                // Useful RTOS inspection helpers — print in GDB Debug Console:
+                //   -exec p kangaroos::CURRENT_TASK
+                //   -exec p kangaroos::TASK_COUNT
+                //   -exec x/17xw &STACK_A
+                { "text": "set print pretty on",          "ignoreFailures": true  }
+            ]
+        }
+    ]
+}
