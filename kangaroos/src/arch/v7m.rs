@@ -77,7 +77,7 @@ unsafe extern "C" fn svc_first_task_sp() -> usize {
         let mut best_idx = 0usize;
 
         for i in 0..count {
-            let t = &crate::TASKS[i];
+            let t = crate::ktask(i);
             if matches!(t.state, TaskState::Ready) && t.priority < best_prio {
                 best_prio = t.priority;
                 best_idx = i;
@@ -85,8 +85,8 @@ unsafe extern "C" fn svc_first_task_sp() -> usize {
         }
 
         crate::CURRENT_TASK = best_idx;
-        crate::TASKS[best_idx].state = TaskState::Running;
-        crate::TASKS[best_idx].sp
+        crate::ktask(best_idx).state = TaskState::Running;
+        crate::ktask(best_idx).sp
     }
 }
 
@@ -101,19 +101,19 @@ unsafe extern "C" fn pendsv_save_and_switch(current_sp: usize) -> usize {
         use crate::kernel::tcb::TaskState;
 
         let old = crate::CURRENT_TASK;
-        crate::TASKS[old].sp = current_sp;
+        crate::ktask(old).sp = current_sp;
 
         // Running → Ready so find_next() can re-select it.
         // Blocked / Sleeping tasks keep their state (not re-queued).
-        if crate::TASKS[old].state == TaskState::Running {
-            crate::TASKS[old].state = TaskState::Ready;
+        if crate::ktask(old).state == TaskState::Running {
+            crate::ktask(old).state = TaskState::Ready;
         }
 
         let next = crate::kernel::scheduler::find_next();
         crate::CURRENT_TASK = next;
-        crate::TASKS[next].state = TaskState::Running;
+        crate::ktask(next).state = TaskState::Running;
 
-        crate::TASKS[next].sp
+        crate::ktask(next).sp
     }
 }
 
