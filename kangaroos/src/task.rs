@@ -6,7 +6,139 @@
 use crate::arch::ArchContext as _;
 use crate::kernel::{tcb::{TaskState, Tcb}, Kernel};
 
-/// Register a task with the given static priority (`0` = highest).
+// ---------------------------------------------------------------------------
+// SpawnToken + Spawner — Embassy-style spawn API
+// ---------------------------------------------------------------------------
+
+/// A task ready to be registered with the kernel.
+///
+/// Produced by calling a `#[kangaroos::task]`-annotated function with its
+/// arguments. Pass the token to [`Spawner::spawn`] inside `#[kangaroos::main]`.
+pub struct SpawnToken {
+    stack_ptr:  *mut u32,
+    stack_len:  usize,      // in words
+    priority:   u8,
+    time_slice: u8,
+    entry:      fn() -> !,
+    name:       &'static str,
+}
+
+// SAFETY: SpawnToken is only created in `fn main()` before any ISR fires,
+// on a single-core device. The raw pointer is to a `'static` stack.
+unsafe impl Send for SpawnToken {}
+unsafe impl Sync for SpawnToken {}
+
+impl SpawnToken {
+    /// Construct a token. Called by `#[task]`-generated factory functions;
+    /// not intended for direct use.
+    #[doc(hidden)]
+    pub fn new(
+        stack_ptr:  *mut u32,
+        stack_len:  usize,
+        priority:   u8,
+        time_slice: u8,
+        entry:      fn() -> !,
+        name:       &'static str,
+    ) -> Self {
+        SpawnToken { stack_ptr, stack_len, priority, time_slice, entry, name }
+    }
+}
+
+/// Registers tasks with the kernel before it starts.
+///
+/// Injected as a parameter by `#[kangaroos::main]`. Call [`Spawner::spawn`]
+/// once per task:
+///
+/// ```rust,ignore
+/// #[kangaroos::main(cpu_hz = 8_000_000, max_tasks = 3)]
+/// fn main(spawner: &mut Spawner) {
+///     spawner.spawn(heartbeat());
+///     spawner.spawn(blink(5, 500));
+/// }
+/// ```
+pub struct Spawner {
+    tasks_ptr: *mut Tcb,
+    max_tasks: usize,
+}
+
+// SAFETY: Spawner is only used in `fn main()` before any ISR fires.
+unsafe impl Send for Spawner {}
+
+impl Spawner {
+    /// Create a `Spawner` from a mutable kernel reference.
+    /// Called by `#[main]`-generated code; not intended for direct use.
+    #[doc(hidden)]
+    pub fn new<const N: usize>(kernel: &mut Kernel<N>) -> Self {
+        Spawner {
+            tasks_ptr: kernel.tasks.as_mut_ptr(),
+            max_tasks: N,
+        }
+    }
+
+    /// Register one task. Panics if the kernel task slots are full.
+    pub fn spawn(&mut self, token: SpawnToken) {
+        // SAFETY: tasks_ptr comes from Kernel<N>.tasks and remains valid for
+        // the lifetime of the kernel (static). Token fields are validated by
+        // the #[task] macro generator.
+        unsafe {
+            spawn_into(
+                self.tasks_ptr,
+                self.max_tasks,
+                token.stack_ptr,
+                token.stack_len,
+                token.priority,
+                token.time_slice,
+                token.entry,
+                token.name,
+            );
+        }
+    }
+}
+
+/// Low-level non-generic spawn used by [`Spawner`].
+///
+/// # Safety
+/// `tasks_ptr` must point to an array of at least `max_tasks` [`Tcb`] slots.
+/// `stack_ptr` must point to a `'static mut [u32]` of `stack_len` words.
+unsafe fn spawn_into(
+    tasks_ptr: *mut Tcb,
+    max_tasks: usize,
+    stack_ptr: *mut u32,
+    stack_len: usize,
+    priority:  u8,
+    time_slice: u8,
+    entry: fn() -> !,
+    name: &'static str,
+) {
+    // Reconstruct the slice. Caller guarantees the memory is 'static.
+    let stack = unsafe { core::slice::from_raw_parts_mut(stack_ptr, stack_len) };
+
+    cortex_m::interrupt::free(|_| unsafe {
+        let idx = crate::TASK_COUNT;
+        assert!(idx < max_tasks, "maximum task count exceeded");
+
+        crate::arch::Arch::canary_init(stack);
+        let sp = crate::arch::Arch::stack_init(stack, entry);
+
+        *tasks_ptr.add(idx) = Tcb {
+            sp,
+            state: TaskState::Ready,
+            priority,
+            base_priority: priority,
+            time_slice,
+            slice_remaining: time_slice,
+            stack_base: stack_ptr as usize,
+            name,
+            wait_next: 0xFF,
+            wait_ptr: 0,
+        };
+
+        core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
+        crate::TASK_COUNT += 1;
+    });
+}
+
+
 ///
 /// The stack slice must have a `'static` lifetime (i.e. come from a
 /// `static mut` array). Call this before `kernel::start`, passing the same
@@ -17,6 +149,7 @@ pub fn spawn<const N: usize>(
     priority: u8,
     time_slice: u8,
     entry: fn() -> !,
+    name: &'static str,
 ) {
     cortex_m::interrupt::free(|_| unsafe {
         let idx = crate::TASK_COUNT;
@@ -34,7 +167,7 @@ pub fn spawn<const N: usize>(
             time_slice,
             slice_remaining: time_slice,
             stack_base,
-            name: "",
+            name,
             wait_next: 0xFF,
             wait_ptr: 0,
         };

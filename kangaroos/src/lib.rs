@@ -7,10 +7,16 @@ pub mod sync;
 pub mod task;
 pub mod timer;
 
+// Re-export proc macros so applications need only `kangaroos` as a dependency.
+pub use kangaroos_macros::{main, task};
+
 use kernel::tcb::Tcb;
 
 // Re-export the kernel type so applications can declare a `static mut` instance.
 pub use kernel::{Kernel, systick_handler};
+
+// Re-export the spawn API so applications need only `use kangaroos::Spawner`.
+pub use task::{Spawner, SpawnToken};
 
 // Global state referenced by PendSV and SysTick handlers.
 // `TASKS_PTR` and `MAX_TASKS` are set once by `kernel::start` before

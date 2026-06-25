@@ -47,7 +47,10 @@ pub(crate) fn find_next() -> usize {
         }
 
         // Unreachable under normal operation (idle task is always Ready).
+        #[cfg(not(feature = "defmt"))]
         panic!("scheduler: no ready task");
+        #[cfg(feature = "defmt")]
+        defmt::panic!("scheduler: no ready task");
     }
 }
 

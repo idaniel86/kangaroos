@@ -97,10 +97,10 @@ pub fn systick_handler() {
     unsafe {
         for i in 0..crate::TASK_COUNT {
             if !crate::arch::Arch::canary_check(crate::ktask(i).stack_base) {
-                // Stack overflow detected — halt with a debugger trap.
-                loop {
-                    cortex_m::asm::bkpt();
-                }
+                #[cfg(not(feature = "defmt"))]
+                panic!("stack overflow");
+                #[cfg(feature = "defmt")]
+                defmt::panic!("stack overflow in task '{}'", crate::ktask(i).name);
             }
         }
     }
