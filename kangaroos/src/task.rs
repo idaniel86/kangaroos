@@ -238,17 +238,18 @@ pub(crate) fn sleep_until(deadline: u64) {
 
 /// Terminate the current task.
 ///
-/// Marks the task as permanently `Blocked`, removing it from the run queues,
-/// then triggers a context switch. This function never returns.
+/// Marks the task as `Dead`, removing it permanently from all run queues,
+/// canary checks, and sync-primitive wait lists, then triggers a context
+/// switch. This function never returns.
 ///
 /// Under normal RTOS usage tasks are infinite loops and never need to call
 /// this; it is provided for completeness and one-shot task patterns.
 pub fn exit() -> ! {
-    cortex_m::interrupt::free(|_| unsafe {
-        crate::ktask(crate::CURRENT_TASK).state = TaskState::Blocked;
-    });
     #[cfg(feature = "defmt")]
     defmt::debug!("task '{}': exiting", unsafe { crate::ktask(crate::CURRENT_TASK).name });
+    cortex_m::interrupt::free(|_| unsafe {
+        crate::ktask(crate::CURRENT_TASK).state = TaskState::Dead;
+    });
     cortex_m::peripheral::SCB::set_pendsv();
     loop {
         cortex_m::asm::wfi();

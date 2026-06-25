@@ -11,6 +11,10 @@ pub(crate) enum TaskState {
     Blocked,
     /// Sleeping until the global tick counter reaches the stored deadline.
     Sleeping(u64),
+    /// Task has called [`task::exit()`] and is permanently removed from all
+    /// queues. The TCB slot is retained but the scheduler, canary checker,
+    /// and all sync primitives skip tasks in this state.
+    Dead,
 }
 
 /// Task control block — one entry in the static `TASKS` array.
