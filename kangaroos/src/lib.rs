@@ -18,6 +18,9 @@ pub use kernel::{Kernel, systick_handler};
 // Re-export the spawn API so applications need only `use kangaroos::Spawner`.
 pub use task::{Spawner, SpawnToken};
 
+// Re-export Phase 6 extended sync primitives at the crate root.
+pub use sync::{Condvar, EventGroup};
+
 // Global state referenced by PendSV and SysTick handlers.
 // `TASKS_PTR` and `MAX_TASKS` are set once by `kernel::start` before
 // interrupts fire; `TASK_COUNT` and `CURRENT_TASK` are updated by PendSV.

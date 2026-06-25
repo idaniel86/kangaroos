@@ -100,8 +100,13 @@ impl<T> Mutex<T> {
         }
     }
 
-    /// Release the lock. Called exclusively from `MutexGuard::drop`.
-    unsafe fn unlock_internal(&self) {
+    /// Release the lock. Called from `MutexGuard::drop` and from `Condvar::wait`.
+    ///
+    /// # Safety
+    /// Caller must be the current lock owner. May be called from within an
+    /// existing `interrupt::free` critical section — nesting is safe on
+    /// single-core ARM because `CPSID` is idempotent.
+    pub(crate) unsafe fn unlock_internal(&self) {
         let mut need_preempt = false;
 
         cortex_m::interrupt::free(|_| unsafe {
@@ -138,9 +143,17 @@ impl<T> Mutex<T> {
 /// `!Send`: a guard must not be moved to another task because it carries the
 /// lock ownership of the *creating* task's context (PI is per-task).
 pub struct MutexGuard<'a, T> {
-    mutex: &'a Mutex<T>,
+    pub(crate) mutex: &'a Mutex<T>,
     // *mut T is !Send + !Sync, which propagates to MutexGuard on stable Rust.
     _not_send: PhantomData<*mut T>,
+}
+
+impl<'a, T> MutexGuard<'a, T> {
+    /// Return a reference to the underlying [`Mutex`]. Used by `Condvar::wait`
+    /// to re-acquire the lock after being woken.
+    pub(crate) fn mutex_ref(&self) -> &'a Mutex<T> {
+        self.mutex
+    }
 }
 
 impl<T> Deref for MutexGuard<'_, T> {
