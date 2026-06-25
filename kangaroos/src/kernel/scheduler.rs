@@ -230,6 +230,9 @@ pub(crate) unsafe fn wait_list_pop_highest(head: &mut u8) -> usize {
 #[unsafe(no_mangle)]
 #[cfg(not(armv8m))]
 unsafe extern "C" fn svc_first_task_sp() -> usize {
+    // SAFETY: called from SVCall (Handler mode) before the scheduler starts.
+    // Single-core Cortex-M: no concurrent mutation of TASKS/TASK_COUNT/
+    // CURRENT_TASK is possible while we are in Handler mode.
     unsafe {
         let count = crate::TASK_COUNT;
         let mut best_prio = u8::MAX;
@@ -258,6 +261,10 @@ unsafe extern "C" fn svc_first_task_sp() -> usize {
 #[unsafe(no_mangle)]
 #[cfg(not(armv8m))]
 unsafe extern "C" fn pendsv_save_and_switch(current_sp: usize) -> usize {
+    // SAFETY: called from PendSV (Handler mode, lowest interrupt priority).
+    // Single-core Cortex-M: exclusive access to TASKS/TASK_COUNT/CURRENT_TASK
+    // is guaranteed — no other Handler-mode code runs concurrently, and
+    // Thread-mode code only touches these globals inside interrupt::free.
     unsafe {
         let old = crate::CURRENT_TASK;
         crate::ktask(old).sp = current_sp;

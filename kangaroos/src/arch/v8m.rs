@@ -207,6 +207,9 @@ global_asm!(
 /// detection is active from the very first instruction the task executes.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn svc_first_task_sp() -> usize {
+    // SAFETY: called from SVCall (Handler mode) before the scheduler starts.
+    // Single-core Cortex-M: no concurrent mutation of TASKS/TASK_COUNT/
+    // CURRENT_TASK is possible while we are in Handler mode.
     unsafe {
         use crate::kernel::tcb::TaskState;
 
@@ -243,6 +246,10 @@ unsafe extern "C" fn svc_first_task_sp() -> usize {
 /// the next task's stack base, and returns the next task's SP.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn pendsv_save_and_switch(current_sp: usize) -> usize {
+    // SAFETY: called from PendSV (Handler mode, lowest interrupt priority).
+    // Single-core Cortex-M: exclusive access to TASKS/TASK_COUNT/CURRENT_TASK
+    // is guaranteed — no other Handler-mode code runs concurrently, and
+    // Thread-mode code only touches these globals inside interrupt::free.
     unsafe {
         use crate::kernel::tcb::TaskState;
 
