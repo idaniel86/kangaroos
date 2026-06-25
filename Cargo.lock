@@ -30,6 +30,8 @@ dependencies = [
  "cortex-m",
  "cortex-m-rt",
  "cortex-m-semihosting",
+ "defmt 0.3.100",
+ "defmt-semihosting",
  "kangaroos",
 ]
 
@@ -120,6 +122,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10d60334b3b2e7c9d91ef8150abfb6fa4c1c39ebbcf4a81c2e346aad939fee3e"
 dependencies = [
  "thiserror",
+]
+
+[[package]]
+name = "defmt-semihosting"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fbd17987293760ae1b90ec42ee12765a9bdf104883458ee0ecc9a203247cc5db"
+dependencies = [
+ "cortex-m",
+ "cortex-m-semihosting",
+ "defmt 0.3.100",
 ]
 
 [[package]]

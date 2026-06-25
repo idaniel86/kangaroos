@@ -2,6 +2,9 @@
 #![no_main]
 
 use cortex_m_rt::exception;
+#[cfg(feature = "defmt")]
+use defmt_semihosting as _;  // pull in transport
+#[cfg(not(feature = "defmt"))]
 use cortex_m_semihosting::hprintln;
 use core::panic::PanicInfo;
 use kangaroos::{sync::Semaphore, timer::Duration, main, task, task::sleep, Spawner};
@@ -14,7 +17,10 @@ static SEM_B: Semaphore = Semaphore::new(0, 1);
 fn task_a(secs: u64) -> ! {
     loop {
         SEM_A.take();
+        #[cfg(not(feature = "defmt"))]
         hprintln!("tick");
+        #[cfg(feature = "defmt")]
+        defmt::info!("tick");
         sleep(Duration::from_secs(secs));
         SEM_B.give();
     }
@@ -24,7 +30,10 @@ fn task_a(secs: u64) -> ! {
 fn task_b(secs: u64) -> ! {
     loop {
         SEM_B.take();
+        #[cfg(not(feature = "defmt"))]
         hprintln!("tock");
+        #[cfg(feature = "defmt")]
+        defmt::info!("tock");
         sleep(Duration::from_secs(secs));
         SEM_A.give();
     }
@@ -43,10 +52,16 @@ fn SysTick() {
     kangaroos::systick_handler();
 }
 
+#[cfg(feature = "defmt")]
+#[defmt::panic_handler]
+fn defmt_panic() -> ! {
+    cortex_m::asm::bkpt();
+    loop {}
+}
+
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! {
     loop {
         cortex_m::asm::bkpt();
     }
 }
-

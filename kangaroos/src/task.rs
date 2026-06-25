@@ -135,6 +135,8 @@ unsafe fn spawn_into(
 
         core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
         crate::TASK_COUNT += 1;
+        #[cfg(feature = "defmt")]
+        defmt::info!("spawned '{}': priority={=u8}, stack={=usize} B", name, priority, stack_len * 4);
     });
 }
 
@@ -176,6 +178,8 @@ pub fn spawn<const N: usize>(
         // it can observe the incremented TASK_COUNT.
         core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
         crate::TASK_COUNT += 1;
+        #[cfg(feature = "defmt")]
+        defmt::info!("spawned '{}': priority={=u8}, stack={=usize} B", name, priority, stack.len() * 4);
     });
 }
 
