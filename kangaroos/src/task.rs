@@ -36,6 +36,7 @@ pub fn spawn<const N: usize>(
             stack_base,
             name: "",
             wait_next: 0xFF,
+            wait_ptr: 0,
         };
 
         // Release fence: all stores above must be visible to PendSV before
@@ -66,6 +67,30 @@ pub fn current_priority() -> u8 {
     // SAFETY: CURRENT_TASK is only mutated by PendSV (Handler mode); this
     // read is effectively atomic on single-core Cortex-M.
     unsafe { crate::ktask(crate::CURRENT_TASK).priority }
+}
+
+/// Block the calling task for at least `duration`.
+///
+/// The task enters `Sleeping` state and is woken by the SysTick handler once
+/// the global tick counter reaches `now + duration.as_ticks()`. A duration of
+/// zero causes a yield to any equal-priority task but returns on the next tick.
+pub fn sleep(duration: crate::timer::Duration) {
+    let deadline = cortex_m::interrupt::free(|_| unsafe {
+        crate::kernel::scheduler::TICK.wrapping_add(duration.as_ticks())
+    });
+    sleep_until(deadline);
+}
+
+/// Block the calling task until the global tick counter reaches `deadline`.
+///
+/// Used by [`sleep`] and [`crate::timer::Timer::wait`] for drift-free periodic
+/// scheduling. The caller supplies an absolute tick deadline rather than a
+/// relative duration.
+pub(crate) fn sleep_until(deadline: u64) {
+    cortex_m::interrupt::free(|_| unsafe {
+        crate::ktask(crate::CURRENT_TASK).state = TaskState::Sleeping(deadline);
+    });
+    cortex_m::peripheral::SCB::set_pendsv();
 }
 
 /// Terminate the current task.

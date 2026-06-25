@@ -1,9 +1,11 @@
 #![no_std]
 
 pub mod arch;
+pub mod channel;
 pub(crate) mod kernel;
 pub mod sync;
 pub mod task;
+pub mod timer;
 
 use kernel::tcb::Tcb;
 
