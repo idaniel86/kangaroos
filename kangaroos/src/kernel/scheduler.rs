@@ -213,3 +213,63 @@ pub(crate) unsafe fn wait_list_pop_highest(head: &mut u8) -> usize {
         best_idx
     }
 }
+
+// ---------------------------------------------------------------------------
+// Assembly-callable context-switch helpers — shared by v6m, v7m, v7em_fpu.
+//
+// ARMv8-M provides its own definitions in `arch/v8m.rs` that additionally
+// update the PSPLIM register, so these are compiled out on that target.
+// ---------------------------------------------------------------------------
+
+/// Select and activate the first task at kernel launch.
+///
+/// Called from the SVCall stub in each arch module via `bl svc_first_task_sp`.
+/// Finds the highest-priority `Ready` task, marks it `Running`, stores its
+/// index in `CURRENT_TASK`, and returns its SP so the assembly performs the
+/// first `EXC_RETURN` into task context.
+#[unsafe(no_mangle)]
+#[cfg(not(armv8m))]
+unsafe extern "C" fn svc_first_task_sp() -> usize {
+    unsafe {
+        let count = crate::TASK_COUNT;
+        let mut best_prio = u8::MAX;
+        let mut best_idx = 0usize;
+
+        for i in 0..count {
+            let t = crate::ktask(i);
+            if matches!(t.state, TaskState::Ready) && t.priority < best_prio {
+                best_prio = t.priority;
+                best_idx = i;
+            }
+        }
+
+        crate::CURRENT_TASK = best_idx;
+        crate::ktask(best_idx).state = TaskState::Running;
+        crate::ktask(best_idx).sp
+    }
+}
+
+/// Save the current task's SP, select the next task, and return its SP.
+///
+/// Called from the PendSV stub in each arch module via
+/// `bl pendsv_save_and_switch` (AAPCS: r0 in = old SP, r0 out = new SP).
+/// Transitions the current task `Running → Ready` (or leaves `Blocked` /
+/// `Sleeping` unchanged), then delegates to `find_next()`.
+#[unsafe(no_mangle)]
+#[cfg(not(armv8m))]
+unsafe extern "C" fn pendsv_save_and_switch(current_sp: usize) -> usize {
+    unsafe {
+        let old = crate::CURRENT_TASK;
+        crate::ktask(old).sp = current_sp;
+
+        if crate::ktask(old).state == TaskState::Running {
+            crate::ktask(old).state = TaskState::Ready;
+        }
+
+        let next = find_next();
+        crate::CURRENT_TASK = next;
+        crate::ktask(next).state = TaskState::Running;
+
+        crate::ktask(next).sp
+    }
+}

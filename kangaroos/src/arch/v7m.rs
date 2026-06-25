@@ -62,61 +62,6 @@ global_asm!(
     "    bx    lr",                   // valid EXC_RETURN from Handler mode → task runs
 );
 
-/// Selects and activates the first task at launch; called from the SVCall stub.
-///
-/// Finds the highest-priority ready task (lowest-index tie-break), marks it
-/// `Running`, stores its index in `CURRENT_TASK`, and returns its SP so the
-/// SVCall assembly can restore its context.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn svc_first_task_sp() -> usize {
-    unsafe {
-        use crate::kernel::tcb::TaskState;
-
-        let count = crate::TASK_COUNT;
-        let mut best_prio = u8::MAX;
-        let mut best_idx = 0usize;
-
-        for i in 0..count {
-            let t = crate::ktask(i);
-            if matches!(t.state, TaskState::Ready) && t.priority < best_prio {
-                best_prio = t.priority;
-                best_idx = i;
-            }
-        }
-
-        crate::CURRENT_TASK = best_idx;
-        crate::ktask(best_idx).state = TaskState::Running;
-        crate::ktask(best_idx).sp
-    }
-}
-
-/// Called from the PendSV stub (AAPCS: r0 = arg, r0 = return value).
-///
-/// Saves the current task's SP, transitions its state (Running → Ready, or
-/// leaves Blocked/Sleeping unchanged), selects the next task via the priority
-/// scheduler, marks it Running, and returns its SP.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn pendsv_save_and_switch(current_sp: usize) -> usize {
-    unsafe {
-        use crate::kernel::tcb::TaskState;
-
-        let old = crate::CURRENT_TASK;
-        crate::ktask(old).sp = current_sp;
-
-        // Running → Ready so find_next() can re-select it.
-        // Blocked / Sleeping tasks keep their state (not re-queued).
-        if crate::ktask(old).state == TaskState::Running {
-            crate::ktask(old).state = TaskState::Ready;
-        }
-
-        let next = crate::kernel::scheduler::find_next();
-        crate::CURRENT_TASK = next;
-        crate::ktask(next).state = TaskState::Running;
-
-        crate::ktask(next).sp
-    }
-}
-
 /// Build an initial stack frame so that the first restore from PendSV (or
 /// `start_first_task`) launches the task cleanly.
 ///
