@@ -60,6 +60,9 @@ impl Once {
                     am_initializer = true;
                 }
                 OnceState::Running => {
+                    #[cfg(feature = "defmt")]
+                    defmt::debug!("once: '{}' waiting for initialisation",
+                        crate::ktask(crate::CURRENT_TASK).name);
                     scheduler::wait_list_push(&mut inner.wait_head, crate::CURRENT_TASK);
                     scheduler::block_current();
                     must_block = true;
@@ -79,6 +82,8 @@ impl Once {
         }
 
         // Run the user-supplied initialisation closure outside any critical section.
+        #[cfg(feature = "defmt")]
+        defmt::debug!("once: '{}' initialising", unsafe { crate::ktask(crate::CURRENT_TASK).name });
         f();
 
         // Mark done and unblock all waiters.
@@ -92,6 +97,8 @@ impl Once {
                 if scheduler::unblock(idx) {
                     need_preempt = true;
                 }
+                #[cfg(feature = "defmt")]
+                defmt::debug!("once: initialised, woke '{}'", crate::ktask(idx).name);
             }
         });
 

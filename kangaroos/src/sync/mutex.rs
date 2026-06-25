@@ -56,6 +56,8 @@ impl<T> Mutex<T> {
             if inner.owner == 0xFF {
                 // Unlocked: claim it immediately.
                 inner.owner = crate::CURRENT_TASK as u8;
+                #[cfg(feature = "defmt")]
+                defmt::debug!("mutex: acquired by '{}'", crate::ktask(crate::CURRENT_TASK).name);
             } else {
                 // Locked: apply priority inheritance then sleep.
                 let cur_idx = crate::CURRENT_TASK;
@@ -64,8 +66,14 @@ impl<T> Mutex<T> {
                 let owner_prio = crate::ktask(owner_idx).priority;
                 if cur_prio < owner_prio {
                     // Boost owner to the waiter's (higher) priority.
+                    #[cfg(feature = "defmt")]
+                    defmt::debug!("mutex: PI boost '{}' prio {=u8} -> {=u8}",
+                        crate::ktask(owner_idx).name, owner_prio, cur_prio);
                     crate::ktask(owner_idx).priority = cur_prio;
                 }
+                #[cfg(feature = "defmt")]
+                defmt::debug!("mutex: contended, '{}' blocking, owner='{}'",
+                    crate::ktask(cur_idx).name, crate::ktask(owner_idx).name);
                 scheduler::wait_list_push(&mut inner.wait_head, cur_idx);
                 scheduler::block_current();
                 must_block = true;
@@ -121,8 +129,13 @@ impl<T> Mutex<T> {
                 let next_owner = scheduler::wait_list_pop_highest(&mut inner.wait_head);
                 inner.owner = next_owner as u8;
                 need_preempt = scheduler::unblock(next_owner);
+                #[cfg(feature = "defmt")]
+                defmt::debug!("mutex: released by '{}', granted to '{}'",
+                    crate::ktask(old_owner).name, crate::ktask(next_owner).name);
             } else {
                 inner.owner = 0xFF;
+                #[cfg(feature = "defmt")]
+                defmt::debug!("mutex: released by '{}'", crate::ktask(old_owner).name);
             }
         });
 

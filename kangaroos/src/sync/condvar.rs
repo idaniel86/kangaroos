@@ -61,6 +61,8 @@ impl Condvar {
 
         cortex_m::interrupt::free(|_| unsafe {
             let inner = &mut *self.0.get();
+            #[cfg(feature = "defmt")]
+            defmt::debug!("condvar: '{}' waiting", crate::ktask(crate::CURRENT_TASK).name);
             scheduler::wait_list_push(&mut inner.wait_head, crate::CURRENT_TASK);
             scheduler::block_current();
             // Release the mutex inside the same critical section.
@@ -87,7 +89,10 @@ impl Condvar {
                 return false;
             }
             let idx = scheduler::wait_list_pop_highest(&mut inner.wait_head);
-            scheduler::unblock(idx)
+            let preempt = scheduler::unblock(idx);
+            #[cfg(feature = "defmt")]
+            defmt::debug!("condvar: notify_one, woke '{}'", crate::ktask(idx).name);
+            preempt
         });
 
         if need_preempt {
@@ -108,6 +113,8 @@ impl Condvar {
                 if scheduler::unblock(idx) {
                     preempt = true;
                 }
+                #[cfg(feature = "defmt")]
+                defmt::debug!("condvar: notify_all, woke '{}'", crate::ktask(idx).name);
             }
             preempt
         });

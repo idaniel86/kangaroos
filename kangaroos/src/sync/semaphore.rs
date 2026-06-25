@@ -50,7 +50,13 @@ impl Semaphore {
             let inner = &mut *self.0.get();
             if inner.count > 0 {
                 inner.count -= 1;
+                #[cfg(feature = "defmt")]
+                defmt::debug!("semaphore: taken by '{}', count={=u8}",
+                    crate::ktask(crate::CURRENT_TASK).name, inner.count);
             } else {
+                #[cfg(feature = "defmt")]
+                defmt::debug!("semaphore: empty, '{}' blocking",
+                    crate::ktask(crate::CURRENT_TASK).name);
                 scheduler::wait_list_push(&mut inner.wait_head, crate::CURRENT_TASK);
                 scheduler::block_current();
                 must_block = true;
@@ -95,10 +101,17 @@ impl Semaphore {
                 // Hand the token directly to the highest-priority waiter.
                 let idx = scheduler::wait_list_pop_highest(&mut inner.wait_head);
                 need_preempt = scheduler::unblock(idx);
+                #[cfg(feature = "defmt")]
+                defmt::debug!("semaphore: given, woke '{}'", crate::ktask(idx).name);
             } else if inner.count < inner.max {
                 inner.count += 1;
+                #[cfg(feature = "defmt")]
+                defmt::debug!("semaphore: given, count={=u8}", inner.count);
+            } else {
+                // count == max and no waiters — token dropped.
+                #[cfg(feature = "defmt")]
+                defmt::warn!("semaphore: give dropped, count at max={=u8}", inner.max);
             }
-            // If count == max and no waiters, the token is silently dropped.
         });
 
         if need_preempt {

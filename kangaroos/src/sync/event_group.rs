@@ -56,6 +56,8 @@ impl EventGroup {
     ///
     /// Safe to call from both task and ISR context.
     pub fn set(&self, mask: u32) -> u32 {
+        #[cfg(feature = "defmt")]
+        defmt::debug!("event_group: set mask={=u32:#x}", mask);
         let (new_bits, need_preempt) = cortex_m::interrupt::free(|_| unsafe {
             let inner = &mut *self.0.get();
             inner.bits |= mask;
@@ -87,6 +89,9 @@ impl EventGroup {
                     if scheduler::unblock(idx) {
                         preempt = true;
                     }
+                    #[cfg(feature = "defmt")]
+                    defmt::debug!("event_group: wait_any satisfied, woke '{}' matched={=u32:#x}",
+                        crate::ktask(idx).name, matched);
                     // prev unchanged — it now links directly to `next`.
                 } else {
                     prev = cur;
@@ -113,6 +118,9 @@ impl EventGroup {
                     if scheduler::unblock(idx) {
                         preempt = true;
                     }
+                    #[cfg(feature = "defmt")]
+                    defmt::debug!("event_group: wait_all satisfied, woke '{}' mask={=u32:#x}",
+                        crate::ktask(idx).name, task_mask);
                 } else {
                     prev = cur;
                 }
@@ -158,6 +166,9 @@ impl EventGroup {
                 crate::ktask(crate::CURRENT_TASK).wait_ptr = matched as usize;
             } else {
                 // Slow path: store the full requested mask so set() can match.
+                #[cfg(feature = "defmt")]
+                defmt::debug!("event_group: wait_any blocking, '{}' mask={=u32:#x}",
+                    crate::ktask(crate::CURRENT_TASK).name, mask);
                 crate::ktask(crate::CURRENT_TASK).wait_ptr = mask as usize;
                 scheduler::wait_list_push(&mut inner.wait_any_head, crate::CURRENT_TASK);
                 scheduler::block_current();
@@ -190,6 +201,9 @@ impl EventGroup {
                 // Fast path: all requested bits are already set.
                 inner.bits &= !mask;
             } else {
+                #[cfg(feature = "defmt")]
+                defmt::debug!("event_group: wait_all blocking, '{}' mask={=u32:#x}",
+                    crate::ktask(crate::CURRENT_TASK).name, mask);
                 crate::ktask(crate::CURRENT_TASK).wait_ptr = mask as usize;
                 scheduler::wait_list_push(&mut inner.wait_all_head, crate::CURRENT_TASK);
                 scheduler::block_current();

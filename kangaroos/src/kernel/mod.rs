@@ -34,7 +34,7 @@ impl<const N: usize> Kernel<N> {
     pub fn start(&mut self, cpu_freq_hz: u32) -> ! {
         unsafe {
             #[cfg(feature = "defmt")]
-            defmt::info!("starting kernel @ {} Hz", cpu_freq_hz);
+            defmt::info!("kernel: starting, initial tasks={=usize} cpu={=u32}Hz", crate::TASK_COUNT, cpu_freq_hz);
 
             // Publish the task-array pointer so interrupt handlers can reach it.
             crate::TASKS_PTR = self.tasks.as_mut_ptr();
@@ -49,7 +49,7 @@ impl<const N: usize> Kernel<N> {
             #[cfg(has_fpu)]
             {
                 #[cfg(feature = "defmt")]
-                defmt::info!("enabling FPU");
+                defmt::debug!("kernel: FPU enabled");
                 const CPACR: *mut u32 = 0xE000_ED88 as *mut u32;
                 CPACR.write_volatile(CPACR.read_volatile() | (0xF << 20));
                 cortex_m::asm::dsb();
@@ -103,7 +103,7 @@ pub fn systick_handler() {
                 #[cfg(not(feature = "defmt"))]
                 panic!("stack overflow");
                 #[cfg(feature = "defmt")]
-                defmt::panic!("stack overflow in task '{}'", crate::ktask(i).name);
+                defmt::panic!("kernel: stack overflow in task '{}'", crate::ktask(i).name);
             }
         }
     }
