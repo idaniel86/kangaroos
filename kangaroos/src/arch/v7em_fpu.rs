@@ -113,51 +113,6 @@ global_asm!(
     "    bx    lr",                  // EXC_RETURN: Thread/PSP/no-FPU → task runs
 );
 
-/// Selects and activates the first task at launch; called from the SVCall stub.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn svc_first_task_sp() -> usize {
-    unsafe {
-        use crate::kernel::tcb::TaskState;
-
-        let count = crate::TASK_COUNT;
-        let mut best_prio = u8::MAX;
-        let mut best_idx = 0usize;
-
-        for i in 0..count {
-            let t = crate::ktask(i);
-            if matches!(t.state, TaskState::Ready) && t.priority < best_prio {
-                best_prio = t.priority;
-                best_idx = i;
-            }
-        }
-
-        crate::CURRENT_TASK = best_idx;
-        crate::ktask(best_idx).state = TaskState::Running;
-        crate::ktask(best_idx).sp
-    }
-}
-
-/// Called from the PendSV stub (AAPCS: r0 = arg / return value).
-#[unsafe(no_mangle)]
-unsafe extern "C" fn pendsv_save_and_switch(current_sp: usize) -> usize {
-    unsafe {
-        use crate::kernel::tcb::TaskState;
-
-        let old = crate::CURRENT_TASK;
-        crate::ktask(old).sp = current_sp;
-
-        if crate::ktask(old).state == TaskState::Running {
-            crate::ktask(old).state = TaskState::Ready;
-        }
-
-        let next = crate::kernel::scheduler::find_next();
-        crate::CURRENT_TASK = next;
-        crate::ktask(next).state = TaskState::Running;
-
-        crate::ktask(next).sp
-    }
-}
-
 /// Build the initial stack frame for a new task (no FPU context saved).
 ///
 /// Layout (ascending addresses):
