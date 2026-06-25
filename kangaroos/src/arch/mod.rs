@@ -8,10 +8,11 @@
 pub(crate) trait ArchContext {
     /// Build the initial stack frame for a newly registered task.
     ///
-    /// `stack` is a statically-allocated `[u32]` slice (≥ 17 words). `entry`
-    /// is the task function; it must never return. Returns the SP value to
-    /// store in `Tcb::sp` — the address of the lowest word of the pre-built
-    /// software save frame.
+    /// `stack` is a statically-allocated `[u32]` slice (≥ 21 words: 17 for
+    /// the initial frame + 4 for the stack-overflow canary). `entry` is the
+    /// task function; it must never return. Returns the SP value to store in
+    /// `Tcb::sp` — the address of the lowest word of the pre-built software
+    /// save frame.
     fn stack_init(stack: &mut [u32], entry: fn() -> !) -> usize;
 
     /// Write the stack-overflow canary pattern (`0xDEAD_BEEF` × 4) to the
