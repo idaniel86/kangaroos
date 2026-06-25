@@ -102,9 +102,12 @@ pub fn systick_handler() {
         cortex_m::peripheral::SCB::set_pendsv();
     }
 
-    // Verify stack canaries for all live tasks.
+    // Verify stack canaries for all live tasks (skip Dead and Uninit slots).
     unsafe {
         for i in 0..crate::TASK_COUNT {
+            if matches!(crate::ktask(i).state, crate::kernel::tcb::TaskState::Dead | crate::kernel::tcb::TaskState::Uninit) {
+                continue;
+            }
             if !crate::arch::Arch::canary_check(crate::ktask(i).stack_base) {
                 #[cfg(not(feature = "defmt"))]
                 panic!("stack overflow");
