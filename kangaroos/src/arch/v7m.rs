@@ -140,7 +140,7 @@ unsafe extern "C" fn pendsv_save_and_switch(current_sp: usize) -> usize {
 /// Returns the value to store in `Tcb::sp`.
 pub fn stack_init(stack: &mut [u32], entry: fn() -> !) -> usize {
     let n = stack.len();
-    assert!(n >= 17, "stack must be at least 17 words (68 bytes)");
+    assert!(n >= 21, "stack must be at least 21 words (84 bytes): 17 frame + 4 canary");
 
     // Hardware exception frame
     stack[n - 1] = 0x0100_0000;                    // xPSR: Thumb bit
