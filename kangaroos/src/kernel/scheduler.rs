@@ -159,6 +159,7 @@ pub(crate) unsafe fn unblock(idx: usize) -> bool {
 /// # Safety
 /// Must be called inside `interrupt::free`.
 pub(crate) unsafe fn wait_list_push(head: &mut u8, task_idx: usize) {
+    debug_assert!(task_idx <= 254, "task_idx {task_idx} exceeds u8 sentinel limit (254)");
     unsafe {
         crate::ktask(task_idx).wait_next = *head;
     }

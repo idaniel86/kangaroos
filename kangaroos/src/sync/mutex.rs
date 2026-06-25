@@ -71,6 +71,7 @@ impl<T> Mutex<T> {
             let inner = &mut *self.inner.get();
             if inner.owner == 0xFF {
                 // Unlocked: claim it immediately.
+                debug_assert!(crate::CURRENT_TASK <= 254, "CURRENT_TASK exceeds u8 sentinel limit");
                 inner.owner = crate::CURRENT_TASK as u8;
                 #[cfg(feature = "defmt")]
                 defmt::debug!("mutex {}: acquired by '{}'", id, crate::ktask(crate::CURRENT_TASK).name);
@@ -111,6 +112,7 @@ impl<T> Mutex<T> {
         let acquired = cortex_m::interrupt::free(|_| unsafe {
             let inner = &mut *self.inner.get();
             if inner.owner == 0xFF {
+                debug_assert!(crate::CURRENT_TASK <= 254, "CURRENT_TASK exceeds u8 sentinel limit");
                 inner.owner = crate::CURRENT_TASK as u8;
                 true
             } else {
@@ -145,6 +147,7 @@ impl<T> Mutex<T> {
             if inner.wait_head != 0xFF {
                 // Transfer ownership directly to the highest-priority waiter.
                 let next_owner = scheduler::wait_list_pop_highest(&mut inner.wait_head);
+                debug_assert!(next_owner <= 254, "next_owner {next_owner} exceeds u8 sentinel limit");
                 inner.owner = next_owner as u8;
                 need_preempt = scheduler::unblock(next_owner);
                 #[cfg(feature = "defmt")]
