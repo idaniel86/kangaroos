@@ -136,7 +136,7 @@ unsafe fn spawn_into(
         core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
         crate::TASK_COUNT += 1;
         #[cfg(feature = "defmt")]
-        defmt::info!("spawned '{}': priority={=u8}, stack={=usize} B", name, priority, stack_len * 4);
+        defmt::info!("task '{}': spawned, priority={=u8} stack={=usize}B", name, priority, stack_len * 4);
     });
 }
 
@@ -179,7 +179,7 @@ pub fn spawn<const N: usize>(
         core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
         crate::TASK_COUNT += 1;
         #[cfg(feature = "defmt")]
-        defmt::info!("spawned '{}': priority={=u8}, stack={=usize} B", name, priority, stack.len() * 4);
+        defmt::info!("task '{}': spawned, priority={=u8} stack={=usize}B", name, priority, stack.len() * 4);
     });
 }
 
@@ -193,6 +193,8 @@ pub fn yield_now() {
     cortex_m::interrupt::free(|_| unsafe {
         crate::ktask(crate::CURRENT_TASK).slice_remaining = 0;
     });
+    #[cfg(feature = "defmt")]
+    defmt::debug!("task '{}': yielding", unsafe { crate::ktask(crate::CURRENT_TASK).name });
     cortex_m::peripheral::SCB::set_pendsv();
 }
 
@@ -215,6 +217,10 @@ pub fn sleep(duration: crate::timer::Duration) {
     let deadline = cortex_m::interrupt::free(|_| unsafe {
         crate::kernel::scheduler::TICK.wrapping_add(duration.as_ticks())
     });
+    #[cfg(feature = "defmt")]
+    defmt::debug!("task '{}': sleeping {=u64}ms",
+        unsafe { crate::ktask(crate::CURRENT_TASK).name },
+        duration.as_millis());
     sleep_until(deadline);
 }
 
@@ -241,6 +247,8 @@ pub fn exit() -> ! {
     cortex_m::interrupt::free(|_| unsafe {
         crate::ktask(crate::CURRENT_TASK).state = TaskState::Blocked;
     });
+    #[cfg(feature = "defmt")]
+    defmt::debug!("task '{}': exiting", unsafe { crate::ktask(crate::CURRENT_TASK).name });
     cortex_m::peripheral::SCB::set_pendsv();
     loop {
         cortex_m::asm::wfi();
