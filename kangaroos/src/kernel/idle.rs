@@ -20,5 +20,5 @@ pub(crate) fn register<const N: usize>(kernel: &mut super::Kernel<N>) {
     // SAFETY: IDLE_STACK is a module-level static accessed only here (once,
     // before interrupts are enabled) and then owned by the idle task forever.
     let stack = unsafe { &mut *core::ptr::addr_of_mut!(IDLE_STACK) };
-    crate::task::spawn(kernel, stack, u8::MAX, 1, idle_task);
+    crate::task::spawn(kernel, stack, u8::MAX, 1, idle_task, "idle");
 }

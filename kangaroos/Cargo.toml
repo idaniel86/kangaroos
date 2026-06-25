@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7"
+kangaroos-macros = { path = "../kangaroos-macros" }
 portable-atomic = { version = "1", default-features = false, features = ["critical-section"] }
 
 [features]
