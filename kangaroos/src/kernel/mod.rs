@@ -33,7 +33,8 @@ impl<const N: usize> Kernel<N> {
     /// `cpu_freq_hz` is used to program a 1 ms SysTick period.
     pub fn start(&mut self, cpu_freq_hz: u32) -> ! {
         unsafe {
-            assert!(crate::TASK_COUNT > 0, "no tasks — call task::spawn first");
+            #[cfg(feature = "defmt")]
+            defmt::info!("starting kernel @ {} Hz", cpu_freq_hz);
 
             // Publish the task-array pointer so interrupt handlers can reach it.
             crate::TASKS_PTR = self.tasks.as_mut_ptr();
@@ -47,6 +48,8 @@ impl<const N: usize> Kernel<N> {
             // Must be done before any VFP instruction (including vstmdb in PendSV).
             #[cfg(has_fpu)]
             {
+                #[cfg(feature = "defmt")]
+                defmt::info!("enabling FPU");
                 const CPACR: *mut u32 = 0xE000_ED88 as *mut u32;
                 CPACR.write_volatile(CPACR.read_volatile() | (0xF << 20));
                 cortex_m::asm::dsb();

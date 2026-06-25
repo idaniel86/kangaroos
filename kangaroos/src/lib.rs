@@ -25,6 +25,14 @@ pub use sync::{Condvar, EventGroup};
 // Re-export Phase 7 pool allocator at the crate root.
 pub use mem::Pool;
 
+// Provide a real millisecond timestamp for defmt when the feature is enabled.
+// TICK is incremented once per SysTick (1 kHz), so it equals ms since boot.
+// Truncating to u32 wraps every ~49 days — acceptable for debug sessions.
+#[cfg(feature = "defmt")]
+defmt::timestamp!("{=u32}", {
+    cortex_m::interrupt::free(|_| unsafe { kernel::scheduler::TICK as u32 })
+});
+
 // Global state referenced by PendSV and SysTick handlers.
 // `TASKS_PTR` and `MAX_TASKS` are set once by `kernel::start` before
 // interrupts fire; `TASK_COUNT` and `CURRENT_TASK` are updated by PendSV.
