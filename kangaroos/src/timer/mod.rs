@@ -64,8 +64,11 @@ impl Add for Duration {
 
 impl Sub for Duration {
     type Output = Duration;
+    /// Subtract two durations, saturating at zero rather than panicking on
+    /// underflow. Use [`Instant::checked_duration_since`] or
+    /// [`Instant::saturating_duration_since`] when the sign is uncertain.
     fn sub(self, rhs: Duration) -> Duration {
-        Duration(self.0 - rhs.0)
+        Duration(self.0.saturating_sub(rhs.0))
     }
 }
 
