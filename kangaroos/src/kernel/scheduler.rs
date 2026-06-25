@@ -22,28 +22,28 @@ pub(crate) fn find_next() -> usize {
         let count = crate::TASK_COUNT;
         let current = crate::CURRENT_TASK;
 
-        // Pass 1: find the minimum (highest) priority among all Ready/Running tasks.
+        // Single pass in round-robin order starting just after the current
+        // task.  Because we visit tasks in the order current+1, current+2, …
+        // (wrapping), the *first* task seen at any priority level is the
+        // correct round-robin winner for that level.  A strictly better
+        // (lower) priority replaces the candidate; equal or worse does not.
+        let start = (current + 1) % count;
         let mut best_prio = u8::MAX;
-        for i in 0..count {
+        let mut best_idx = usize::MAX;
+
+        for offset in 0..count {
+            let i = (start + offset) % count;
             let t = crate::ktask(i);
             if matches!(t.state, TaskState::Ready | TaskState::Running)
                 && t.priority < best_prio
             {
                 best_prio = t.priority;
+                best_idx = i;
             }
         }
 
-        // Pass 2: starting just after the current task, pick the first task at
-        // `best_prio` (round-robin within the priority tier).
-        let start = (current + 1) % count;
-        for offset in 0..count {
-            let i = (start + offset) % count;
-            let t = crate::ktask(i);
-            if t.priority == best_prio
-                && matches!(t.state, TaskState::Ready | TaskState::Running)
-            {
-                return i;
-            }
+        if best_idx != usize::MAX {
+            return best_idx;
         }
 
         // Unreachable under normal operation (idle task is always Ready).
