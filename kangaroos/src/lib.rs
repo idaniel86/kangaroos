@@ -3,6 +3,7 @@
 pub mod arch;
 pub mod channel;
 pub(crate) mod kernel;
+pub mod mem;
 pub mod sync;
 pub mod task;
 pub mod timer;
@@ -20,6 +21,9 @@ pub use task::{Spawner, SpawnToken};
 
 // Re-export Phase 6 extended sync primitives at the crate root.
 pub use sync::{Condvar, EventGroup};
+
+// Re-export Phase 7 pool allocator at the crate root.
+pub use mem::Pool;
 
 // Global state referenced by PendSV and SysTick handlers.
 // `TASKS_PTR` and `MAX_TASKS` are set once by `kernel::start` before
