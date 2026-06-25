@@ -21,7 +21,13 @@ pub struct Kernel<const N: usize> {
 impl<const N: usize> Kernel<N> {
     /// Construct a kernel with all task slots uninitialised.
     /// `const fn` so it can initialise a `static`.
+    ///
+    /// # Panics (compile time)
+    /// Panics if `N > 254`. The intrusive wait-lists use `u8` indices with
+    /// `0xFF` (255) as the empty-list sentinel; allowing index 255 would
+    /// make task 255 indistinguishable from "no task".
     pub const fn new() -> Self {
+        assert!(N <= 254, "Kernel<N>: N must be \u{2264} 254 (0xFF is the wait-list sentinel)");
         Kernel {
             tasks: [Tcb::zeroed(); N],
         }

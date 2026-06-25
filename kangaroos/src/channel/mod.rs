@@ -60,7 +60,12 @@ unsafe impl<T: Send, const N: usize> Sync for Channel<T, N> {}
 
 impl<T: Send, const N: usize> Channel<T, N> {
     /// Create an empty channel.  `const fn` so it can initialise a `static`.
+    ///
+    /// # Panics (compile time)
+    /// Panics if `N > 254`. The blocked-sender/receiver wait-lists use `u8`
+    /// indices with `0xFF` (255) as the empty-list sentinel.
     pub const fn new() -> Self {
+        assert!(N <= 254, "Channel<T, N>: N must be \u{2264} 254 (0xFF is the wait-list sentinel)");
         Channel(UnsafeCell::new(ChannelInner {
             buf: [const { MaybeUninit::uninit() }; N],
             head: 0,
