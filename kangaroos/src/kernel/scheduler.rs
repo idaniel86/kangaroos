@@ -34,8 +34,10 @@ pub(crate) fn find_next() -> usize {
         for offset in 0..count {
             let i = (start + offset) % count;
             let t = crate::ktask(i);
+            // Accept if no candidate yet (covers priority == u8::MAX, i.e. idle),
+            // or if this task has strictly higher priority (lower value).
             if matches!(t.state, TaskState::Ready | TaskState::Running)
-                && t.priority < best_prio
+                && (best_idx == usize::MAX || t.priority < best_prio)
             {
                 best_prio = t.priority;
                 best_idx = i;
