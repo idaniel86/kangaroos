@@ -1,6 +1,5 @@
 /// Current execution state of a task.
 #[derive(Copy, Clone, PartialEq, Eq)]
-#[allow(dead_code)] // Sleeping used in Phase 5 (task::sleep / timer)
 pub(crate) enum TaskState {
     /// Slot not yet initialised (default for the `TASKS` array).
     Uninit,
@@ -40,6 +39,15 @@ pub(crate) struct Tcb {
     /// Intrusive singly-linked wait-list next pointer.
     /// `0xFF` means "end of list". Valid only while `state == Blocked`.
     pub(crate) wait_next: u8,
+    /// Raw pointer (as `usize`) to a value parked on this task's frozen stack.
+    ///
+    /// Used by `Channel` blocking paths:
+    /// - Blocked **sender**: points to a `MaybeUninit<T>` holding the pending value.
+    /// - Blocked **receiver**: points to a `MaybeUninit<T>` slot to be filled by the sender.
+    ///
+    /// Valid only while `state == Blocked` and the task is in a channel wait list.
+    /// Initialised to `0`; meaningless in any other state.
+    pub(crate) wait_ptr: usize,
 }
 
 impl Tcb {
@@ -55,6 +63,7 @@ impl Tcb {
             stack_base: 0,
             name: "",
             wait_next: 0xFF,
+            wait_ptr: 0,
         }
     }
 }
