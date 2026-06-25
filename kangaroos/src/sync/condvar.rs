@@ -34,16 +34,34 @@ struct CondvarInner {
 ///     g = CV.wait(g);
 /// }
 /// ```
-pub struct Condvar(UnsafeCell<CondvarInner>);
+pub struct Condvar {
+    inner: UnsafeCell<CondvarInner>,
+    /// Optional human-readable name. `None` when constructed with [`Condvar::new`];
+    /// set by [`Condvar::new_named`] or the [`condvar!`] macro.
+    pub name: Option<&'static str>,
+}
 
 // SAFETY: single-core Cortex-M; all mutations are guarded by `interrupt::free`.
 unsafe impl Sync for Condvar {}
 unsafe impl Send for Condvar {}
 
 impl Condvar {
-    /// Create a new condition variable.
+    /// Create a new unnamed condition variable. Prefer the [`condvar!`] macro
+    /// for named statics.
     pub const fn new() -> Self {
-        Condvar(UnsafeCell::new(CondvarInner { wait_head: 0xFF }))
+        Condvar {
+            inner: UnsafeCell::new(CondvarInner { wait_head: 0xFF }),
+            name: None,
+        }
+    }
+
+    /// Create a named condition variable. Called by the [`condvar!`] macro;
+    /// prefer that macro over calling this directly.
+    pub const fn new_named(name: &'static str) -> Self {
+        Condvar {
+            inner: UnsafeCell::new(CondvarInner { wait_head: 0xFF }),
+            name: Some(name),
+        }
     }
 
     /// Atomically release `guard`'s mutex and block until notified.
@@ -53,6 +71,8 @@ impl Condvar {
     pub fn wait<'m, T>(&self, guard: MutexGuard<'m, T>) -> MutexGuard<'m, T> {
         // Capture the mutex reference before the guard is consumed.
         let mutex_ref: &'m Mutex<T> = guard.mutex_ref();
+        #[cfg(feature = "defmt")]
+        let id = super::PrimName(self.name, self as *const _ as u32);
 
         // Prevent `guard`'s Drop from unlocking the mutex — we do that
         // manually inside the critical section below so that the release and
@@ -60,9 +80,9 @@ impl Condvar {
         let _guard = core::mem::ManuallyDrop::new(guard);
 
         cortex_m::interrupt::free(|_| unsafe {
-            let inner = &mut *self.0.get();
+            let inner = &mut *self.inner.get();
             #[cfg(feature = "defmt")]
-            defmt::debug!("condvar: '{}' waiting", crate::ktask(crate::CURRENT_TASK).name);
+            defmt::debug!("condvar {}: '{}' waiting", id, crate::ktask(crate::CURRENT_TASK).name);
             scheduler::wait_list_push(&mut inner.wait_head, crate::CURRENT_TASK);
             scheduler::block_current();
             // Release the mutex inside the same critical section.
@@ -83,15 +103,17 @@ impl Condvar {
 
     /// Wake the highest-priority task waiting on this condition variable, if any.
     pub fn notify_one(&self) {
+        #[cfg(feature = "defmt")]
+        let id = super::PrimName(self.name, self as *const _ as u32);
         let need_preempt = cortex_m::interrupt::free(|_| unsafe {
-            let inner = &mut *self.0.get();
+            let inner = &mut *self.inner.get();
             if inner.wait_head == 0xFF {
                 return false;
             }
             let idx = scheduler::wait_list_pop_highest(&mut inner.wait_head);
             let preempt = scheduler::unblock(idx);
             #[cfg(feature = "defmt")]
-            defmt::debug!("condvar: notify_one, woke '{}'", crate::ktask(idx).name);
+            defmt::debug!("condvar {}: notify_one, woke '{}'", id, crate::ktask(idx).name);
             preempt
         });
 
@@ -105,8 +127,10 @@ impl Condvar {
     /// Tasks are woken in priority order. After waking they each compete to
     /// re-acquire the associated mutex via [`Mutex::lock`].
     pub fn notify_all(&self) {
+        #[cfg(feature = "defmt")]
+        let id = super::PrimName(self.name, self as *const _ as u32);
         let need_preempt = cortex_m::interrupt::free(|_| unsafe {
-            let inner = &mut *self.0.get();
+            let inner = &mut *self.inner.get();
             let mut preempt = false;
             while inner.wait_head != 0xFF {
                 let idx = scheduler::wait_list_pop_highest(&mut inner.wait_head);
@@ -114,7 +138,7 @@ impl Condvar {
                     preempt = true;
                 }
                 #[cfg(feature = "defmt")]
-                defmt::debug!("condvar: notify_all, woke '{}'", crate::ktask(idx).name);
+                defmt::debug!("condvar {}: notify_all, woke '{}'", id, crate::ktask(idx).name);
             }
             preempt
         });

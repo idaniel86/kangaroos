@@ -25,6 +25,71 @@ pub use sync::{Condvar, EventGroup};
 // Re-export Phase 7 pool allocator at the crate root.
 pub use mem::Pool;
 
+/// Declare a named static [`sync::Semaphore`].
+///
+/// ```ignore
+/// semaphore!(SEM, 0, 1); // static SEM: Semaphore named "SEM"
+/// ```
+#[macro_export]
+macro_rules! semaphore {
+    ($var:ident, $initial:expr, $max:expr) => {
+        static $var: $crate::sync::Semaphore =
+            $crate::sync::Semaphore::new_named($initial, $max, stringify!($var));
+    };
+}
+
+/// Declare a named static [`sync::Mutex`].
+///
+/// ```ignore
+/// mutex!(COUNTER, u32, 0); // static COUNTER: Mutex<u32> named "COUNTER"
+/// ```
+#[macro_export]
+macro_rules! mutex {
+    ($var:ident, $ty:ty, $data:expr) => {
+        static $var: $crate::sync::Mutex<$ty> =
+            $crate::sync::Mutex::new_named($data, stringify!($var));
+    };
+}
+
+/// Declare a named static [`sync::Condvar`].
+///
+/// ```ignore
+/// condvar!(CV); // static CV: Condvar named "CV"
+/// ```
+#[macro_export]
+macro_rules! condvar {
+    ($var:ident) => {
+        static $var: $crate::sync::Condvar =
+            $crate::sync::Condvar::new_named(stringify!($var));
+    };
+}
+
+/// Declare a named static [`sync::EventGroup`].
+///
+/// ```ignore
+/// event_group!(FLAGS); // static FLAGS: EventGroup named "FLAGS"
+/// ```
+#[macro_export]
+macro_rules! event_group {
+    ($var:ident) => {
+        static $var: $crate::sync::EventGroup =
+            $crate::sync::EventGroup::new_named(stringify!($var));
+    };
+}
+
+/// Declare a named static [`sync::Once`].
+///
+/// ```ignore
+/// once!(INIT); // static INIT: Once named "INIT"
+/// ```
+#[macro_export]
+macro_rules! once {
+    ($var:ident) => {
+        static $var: $crate::sync::Once =
+            $crate::sync::Once::new_named(stringify!($var));
+    };
+}
+
 // Provide a real millisecond timestamp for defmt when the feature is enabled.
 // TICK is incremented once per SysTick (1 kHz), so it equals ms since boot.
 // Truncating to u32 wraps every ~49 days — acceptable for debug sessions.

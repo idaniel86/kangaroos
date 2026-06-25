@@ -28,20 +28,34 @@ struct MutexInner<T> {
 /// *guard += 1;
 /// // guard is released (and priority restored) here via Drop
 /// ```
-pub struct Mutex<T>(UnsafeCell<MutexInner<T>>);
+pub struct Mutex<T> {
+    inner: UnsafeCell<MutexInner<T>>,
+    /// Optional human-readable name. `None` when constructed with [`Mutex::new`];
+    /// set by [`Mutex::new_named`] or the [`mutex!`] macro.
+    pub name: Option<&'static str>,
+}
 
 // SAFETY: single-core Cortex-M; all mutations are guarded by `interrupt::free`.
 unsafe impl<T: Send> Sync for Mutex<T> {}
 unsafe impl<T: Send> Send for Mutex<T> {}
 
 impl<T> Mutex<T> {
-    /// Create a new, unlocked `Mutex` wrapping `data`.
+    /// Create a new, unlocked `Mutex` wrapping `data`. Prefer the [`mutex!`]
+    /// macro for named statics.
     pub const fn new(data: T) -> Self {
-        Mutex(UnsafeCell::new(MutexInner {
-            data,
-            owner: 0xFF,
-            wait_head: 0xFF,
-        }))
+        Mutex {
+            inner: UnsafeCell::new(MutexInner { data, owner: 0xFF, wait_head: 0xFF }),
+            name: None,
+        }
+    }
+
+    /// Create a named `Mutex`. Called by the [`mutex!`] macro; prefer
+    /// that macro over calling this directly.
+    pub const fn new_named(data: T, name: &'static str) -> Self {
+        Mutex {
+            inner: UnsafeCell::new(MutexInner { data, owner: 0xFF, wait_head: 0xFF }),
+            name: Some(name),
+        }
     }
 
     /// Acquire the lock, blocking until it is available.
@@ -50,14 +64,16 @@ impl<T> Mutex<T> {
     /// Must not be called from interrupt handlers.
     pub fn lock(&self) -> MutexGuard<'_, T> {
         let mut must_block = false;
+        #[cfg(feature = "defmt")]
+        let id = super::PrimName(self.name, self as *const _ as u32);
 
         cortex_m::interrupt::free(|_| unsafe {
-            let inner = &mut *self.0.get();
+            let inner = &mut *self.inner.get();
             if inner.owner == 0xFF {
                 // Unlocked: claim it immediately.
                 inner.owner = crate::CURRENT_TASK as u8;
                 #[cfg(feature = "defmt")]
-                defmt::debug!("mutex: acquired by '{}'", crate::ktask(crate::CURRENT_TASK).name);
+                defmt::debug!("mutex {}: acquired by '{}'", id, crate::ktask(crate::CURRENT_TASK).name);
             } else {
                 // Locked: apply priority inheritance then sleep.
                 let cur_idx = crate::CURRENT_TASK;
@@ -67,13 +83,13 @@ impl<T> Mutex<T> {
                 if cur_prio < owner_prio {
                     // Boost owner to the waiter's (higher) priority.
                     #[cfg(feature = "defmt")]
-                    defmt::debug!("mutex: PI boost '{}' prio {=u8} -> {=u8}",
-                        crate::ktask(owner_idx).name, owner_prio, cur_prio);
+                    defmt::debug!("mutex {}: PI boost '{}' prio {=u8} -> {=u8}",
+                        id, crate::ktask(owner_idx).name, owner_prio, cur_prio);
                     crate::ktask(owner_idx).priority = cur_prio;
                 }
                 #[cfg(feature = "defmt")]
-                defmt::debug!("mutex: contended, '{}' blocking, owner='{}'",
-                    crate::ktask(cur_idx).name, crate::ktask(owner_idx).name);
+                defmt::debug!("mutex {}: contended, '{}' blocking, owner='{}'",
+                    id, crate::ktask(cur_idx).name, crate::ktask(owner_idx).name);
                 scheduler::wait_list_push(&mut inner.wait_head, cur_idx);
                 scheduler::block_current();
                 must_block = true;
@@ -93,7 +109,7 @@ impl<T> Mutex<T> {
     /// Returns `Some(guard)` if the lock was free, `None` otherwise.
     pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
         let acquired = cortex_m::interrupt::free(|_| unsafe {
-            let inner = &mut *self.0.get();
+            let inner = &mut *self.inner.get();
             if inner.owner == 0xFF {
                 inner.owner = crate::CURRENT_TASK as u8;
                 true
@@ -116,9 +132,11 @@ impl<T> Mutex<T> {
     /// single-core ARM because `CPSID` is idempotent.
     pub(crate) unsafe fn unlock_internal(&self) {
         let mut need_preempt = false;
+        #[cfg(feature = "defmt")]
+        let id = super::PrimName(self.name, self as *const _ as u32);
 
         cortex_m::interrupt::free(|_| unsafe {
-            let inner = &mut *self.0.get();
+            let inner = &mut *self.inner.get();
             let old_owner = inner.owner as usize;
 
             // Restore the holder's effective priority to its static base.
@@ -130,12 +148,12 @@ impl<T> Mutex<T> {
                 inner.owner = next_owner as u8;
                 need_preempt = scheduler::unblock(next_owner);
                 #[cfg(feature = "defmt")]
-                defmt::debug!("mutex: released by '{}', granted to '{}'",
-                    crate::ktask(old_owner).name, crate::ktask(next_owner).name);
+                defmt::debug!("mutex {}: released by '{}', granted to '{}'",
+                    id, crate::ktask(old_owner).name, crate::ktask(next_owner).name);
             } else {
                 inner.owner = 0xFF;
                 #[cfg(feature = "defmt")]
-                defmt::debug!("mutex: released by '{}'", crate::ktask(old_owner).name);
+                defmt::debug!("mutex {}: released by '{}'", id, crate::ktask(old_owner).name);
             }
         });
 
@@ -173,14 +191,14 @@ impl<T> Deref for MutexGuard<'_, T> {
     type Target = T;
     fn deref(&self) -> &T {
         // SAFETY: we hold the lock.
-        unsafe { &(*self.mutex.0.get()).data }
+        unsafe { &(*self.mutex.inner.get()).data }
     }
 }
 
 impl<T> DerefMut for MutexGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut T {
         // SAFETY: we hold the lock.
-        unsafe { &mut (*self.mutex.0.get()).data }
+        unsafe { &mut (*self.mutex.inner.get()).data }
     }
 }
 
