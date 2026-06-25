@@ -7,11 +7,11 @@ use defmt_semihosting as _;  // pull in transport
 #[cfg(not(feature = "defmt"))]
 use cortex_m_semihosting::hprintln;
 use core::panic::PanicInfo;
-use kangaroos::{sync::Semaphore, timer::Duration, main, task, task::sleep, Spawner};
+use kangaroos::{timer::Duration, main, task, task::sleep, Spawner};
 
 // SEM_A starts at 1 so task_a fires first; SEM_B starts at 0.
-static SEM_A: Semaphore = Semaphore::new(1, 1);
-static SEM_B: Semaphore = Semaphore::new(0, 1);
+kangaroos::semaphore!(SEM_A, 1, 1);
+kangaroos::semaphore!(SEM_B, 0, 1);
 
 #[task(priority = 0, stack_size = 2048, time_slice = 10)]
 fn task_a(secs: u64) -> ! {

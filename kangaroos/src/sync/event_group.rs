@@ -32,20 +32,42 @@ struct EventGroupInner {
 /// // Producer (possibly from an ISR via set_from_isr):
 /// EG.set(0b01);
 /// ```
-pub struct EventGroup(UnsafeCell<EventGroupInner>);
+pub struct EventGroup {
+    inner: UnsafeCell<EventGroupInner>,
+    /// Optional human-readable name. `None` when constructed with [`EventGroup::new`];
+    /// set by [`EventGroup::new_named`] or the [`event_group!`] macro.
+    pub name: Option<&'static str>,
+}
 
 // SAFETY: single-core Cortex-M; all mutations are guarded by `interrupt::free`.
 unsafe impl Sync for EventGroup {}
 unsafe impl Send for EventGroup {}
 
 impl EventGroup {
-    /// Create a new `EventGroup` with all bits cleared.
+    /// Create a new unnamed `EventGroup` with all bits cleared. Prefer the
+    /// [`event_group!`] macro for named statics.
     pub const fn new() -> Self {
-        EventGroup(UnsafeCell::new(EventGroupInner {
-            bits: 0,
-            wait_any_head: 0xFF,
-            wait_all_head: 0xFF,
-        }))
+        EventGroup {
+            inner: UnsafeCell::new(EventGroupInner {
+                bits: 0,
+                wait_any_head: 0xFF,
+                wait_all_head: 0xFF,
+            }),
+            name: None,
+        }
+    }
+
+    /// Create a named `EventGroup`. Called by the [`event_group!`] macro;
+    /// prefer that macro over calling this directly.
+    pub const fn new_named(name: &'static str) -> Self {
+        EventGroup {
+            inner: UnsafeCell::new(EventGroupInner {
+                bits: 0,
+                wait_any_head: 0xFF,
+                wait_all_head: 0xFF,
+            }),
+            name: Some(name),
+        }
     }
 
     /// Set one or more bits, potentially waking blocked tasks.
@@ -57,9 +79,11 @@ impl EventGroup {
     /// Safe to call from both task and ISR context.
     pub fn set(&self, mask: u32) -> u32 {
         #[cfg(feature = "defmt")]
-        defmt::debug!("event_group: set mask={=u32:#x}", mask);
+        let id = super::PrimName(self.name, self as *const _ as u32);
+        #[cfg(feature = "defmt")]
+        defmt::debug!("event_group {}: set mask={=u32:#x}", id, mask);
         let (new_bits, need_preempt) = cortex_m::interrupt::free(|_| unsafe {
-            let inner = &mut *self.0.get();
+            let inner = &mut *self.inner.get();
             inner.bits |= mask;
             let mut preempt = false;
 
@@ -90,8 +114,8 @@ impl EventGroup {
                         preempt = true;
                     }
                     #[cfg(feature = "defmt")]
-                    defmt::debug!("event_group: wait_any satisfied, woke '{}' matched={=u32:#x}",
-                        crate::ktask(idx).name, matched);
+                    defmt::debug!("event_group {}: wait_any satisfied, woke '{}' matched={=u32:#x}",
+                        id, crate::ktask(idx).name, matched);
                     // prev unchanged — it now links directly to `next`.
                 } else {
                     prev = cur;
@@ -119,8 +143,8 @@ impl EventGroup {
                         preempt = true;
                     }
                     #[cfg(feature = "defmt")]
-                    defmt::debug!("event_group: wait_all satisfied, woke '{}' mask={=u32:#x}",
-                        crate::ktask(idx).name, task_mask);
+                    defmt::debug!("event_group {}: wait_all satisfied, woke '{}' mask={=u32:#x}",
+                        id, crate::ktask(idx).name, task_mask);
                 } else {
                     prev = cur;
                 }
@@ -140,13 +164,13 @@ impl EventGroup {
     /// Clear one or more bits without waking any waiting tasks.
     pub fn clear(&self, mask: u32) {
         cortex_m::interrupt::free(|_| unsafe {
-            (*self.0.get()).bits &= !mask;
+            (*self.inner.get()).bits &= !mask;
         });
     }
 
     /// Read the current bit state without blocking.
     pub fn get(&self) -> u32 {
-        cortex_m::interrupt::free(|_| unsafe { (*self.0.get()).bits })
+        cortex_m::interrupt::free(|_| unsafe { (*self.inner.get()).bits })
     }
 
     /// Block until **any** of the bits in `mask` are set.
@@ -155,9 +179,11 @@ impl EventGroup {
     /// interrupt handler.
     pub fn wait_any(&self, mask: u32) -> u32 {
         let mut must_block = false;
+        #[cfg(feature = "defmt")]
+        let id = super::PrimName(self.name, self as *const _ as u32);
 
         cortex_m::interrupt::free(|_| unsafe {
-            let inner = &mut *self.0.get();
+            let inner = &mut *self.inner.get();
             let matched = inner.bits & mask;
             if matched != 0 {
                 // Fast path: at least one requested bit is already set.
@@ -167,8 +193,8 @@ impl EventGroup {
             } else {
                 // Slow path: store the full requested mask so set() can match.
                 #[cfg(feature = "defmt")]
-                defmt::debug!("event_group: wait_any blocking, '{}' mask={=u32:#x}",
-                    crate::ktask(crate::CURRENT_TASK).name, mask);
+                defmt::debug!("event_group {}: wait_any blocking, '{}' mask={=u32:#x}",
+                    id, crate::ktask(crate::CURRENT_TASK).name, mask);
                 crate::ktask(crate::CURRENT_TASK).wait_ptr = mask as usize;
                 scheduler::wait_list_push(&mut inner.wait_any_head, crate::CURRENT_TASK);
                 scheduler::block_current();
@@ -194,16 +220,18 @@ impl EventGroup {
     /// an interrupt handler.
     pub fn wait_all(&self, mask: u32) {
         let mut must_block = false;
+        #[cfg(feature = "defmt")]
+        let id = super::PrimName(self.name, self as *const _ as u32);
 
         cortex_m::interrupt::free(|_| unsafe {
-            let inner = &mut *self.0.get();
+            let inner = &mut *self.inner.get();
             if inner.bits & mask == mask {
                 // Fast path: all requested bits are already set.
                 inner.bits &= !mask;
             } else {
                 #[cfg(feature = "defmt")]
-                defmt::debug!("event_group: wait_all blocking, '{}' mask={=u32:#x}",
-                    crate::ktask(crate::CURRENT_TASK).name, mask);
+                defmt::debug!("event_group {}: wait_all blocking, '{}' mask={=u32:#x}",
+                    id, crate::ktask(crate::CURRENT_TASK).name, mask);
                 crate::ktask(crate::CURRENT_TASK).wait_ptr = mask as usize;
                 scheduler::wait_list_push(&mut inner.wait_all_head, crate::CURRENT_TASK);
                 scheduler::block_current();
@@ -226,7 +254,7 @@ impl EventGroup {
     /// Must be called from an interrupt handler or inside `interrupt::free`.
     pub unsafe fn set_from_isr(&self, mask: u32) -> bool {
         cortex_m::interrupt::free(|_| unsafe {
-            let inner = &mut *self.0.get();
+            let inner = &mut *self.inner.get();
             inner.bits |= mask;
             let mut preempt = false;
 

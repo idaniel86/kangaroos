@@ -27,18 +27,38 @@ struct OnceInner {
 ///     // expensive one-time setup …
 /// });
 /// ```
-pub struct Once(UnsafeCell<OnceInner>);
+pub struct Once {
+    inner: UnsafeCell<OnceInner>,
+    /// Optional human-readable name. `None` when constructed with [`Once::new`];
+    /// set by [`Once::new_named`] or the [`once!`] macro.
+    pub name: Option<&'static str>,
+}
 
 // SAFETY: single-core Cortex-M; all mutations guarded by `interrupt::free`.
 unsafe impl Sync for Once {}
 
 impl Once {
-    /// Create an uninitialised `Once`.
+    /// Create an unnamed `Once`. Prefer the [`once!`] macro for named statics.
     pub const fn new() -> Self {
-        Once(UnsafeCell::new(OnceInner {
-            state: OnceState::Unstarted,
-            wait_head: 0xFF,
-        }))
+        Once {
+            inner: UnsafeCell::new(OnceInner {
+                state: OnceState::Unstarted,
+                wait_head: 0xFF,
+            }),
+            name: None,
+        }
+    }
+
+    /// Create a named `Once`. Called by the [`once!`] macro; prefer that
+    /// macro over calling this directly.
+    pub const fn new_named(name: &'static str) -> Self {
+        Once {
+            inner: UnsafeCell::new(OnceInner {
+                state: OnceState::Unstarted,
+                wait_head: 0xFF,
+            }),
+            name: Some(name),
+        }
     }
 
     /// Run `f` if this is the first call; otherwise wait for the first caller
@@ -50,9 +70,11 @@ impl Once {
         // Determine our role under the critical section.
         let mut am_initializer = false;
         let mut must_block = false;
+        #[cfg(feature = "defmt")]
+        let id = super::PrimName(self.name, self as *const _ as u32);
 
         cortex_m::interrupt::free(|_| unsafe {
-            let inner = &mut *self.0.get();
+            let inner = &mut *self.inner.get();
             match inner.state {
                 OnceState::Done => {}
                 OnceState::Unstarted => {
@@ -61,8 +83,8 @@ impl Once {
                 }
                 OnceState::Running => {
                     #[cfg(feature = "defmt")]
-                    defmt::debug!("once: '{}' waiting for initialisation",
-                        crate::ktask(crate::CURRENT_TASK).name);
+                    defmt::debug!("once {}: '{}' waiting for initialisation",
+                        id, crate::ktask(crate::CURRENT_TASK).name);
                     scheduler::wait_list_push(&mut inner.wait_head, crate::CURRENT_TASK);
                     scheduler::block_current();
                     must_block = true;
@@ -83,13 +105,13 @@ impl Once {
 
         // Run the user-supplied initialisation closure outside any critical section.
         #[cfg(feature = "defmt")]
-        defmt::debug!("once: '{}' initialising", unsafe { crate::ktask(crate::CURRENT_TASK).name });
+        defmt::debug!("once {}: '{}' initialising", id, unsafe { crate::ktask(crate::CURRENT_TASK).name });
         f();
 
         // Mark done and unblock all waiters.
         let mut need_preempt = false;
         cortex_m::interrupt::free(|_| unsafe {
-            let inner = &mut *self.0.get();
+            let inner = &mut *self.inner.get();
             inner.state = OnceState::Done;
             // Drain the entire wait list.
             while inner.wait_head != 0xFF {
@@ -98,7 +120,7 @@ impl Once {
                     need_preempt = true;
                 }
                 #[cfg(feature = "defmt")]
-                defmt::debug!("once: initialised, woke '{}'", crate::ktask(idx).name);
+                defmt::debug!("once {}: initialised, woke '{}'", id, crate::ktask(idx).name);
             }
         });
 
@@ -110,7 +132,7 @@ impl Once {
     /// Returns `true` if the initialisation closure has already completed.
     pub fn is_completed(&self) -> bool {
         cortex_m::interrupt::free(|_| unsafe {
-            (*self.0.get()).state == OnceState::Done
+            (*self.inner.get()).state == OnceState::Done
         })
     }
 }
