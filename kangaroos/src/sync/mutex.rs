@@ -108,6 +108,21 @@ impl<T> Mutex<T> {
     /// Attempt to acquire the lock without blocking.
     ///
     /// Returns `Some(guard)` if the lock was free, `None` otherwise.
+    ///
+    /// # Priority inheritance
+    /// **`try_lock` does not apply priority inheritance (PI).** If a
+    /// lower-priority task acquires the lock via `try_lock` while a
+    /// higher-priority task later blocks in [`lock`], no PI boost is applied
+    /// to the holder because the boost is set at the moment a waiter blocks —
+    /// but `try_lock` never blocks.  This can cause unbounded priority
+    /// inversion if the holder is preempted while holding the lock.
+    ///
+    /// Prefer [`lock`] in any code path where priority inversion matters.
+    /// Use `try_lock` only for genuinely non-blocking, best-effort paths
+    /// (e.g. ISR-adjacent code or spin-free fast paths where the caller
+    /// immediately retries via the blocking [`lock`] on failure).
+    ///
+    /// [`lock`]: Mutex::lock
     pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
         let acquired = cortex_m::interrupt::free(|_| unsafe {
             let inner = &mut *self.inner.get();
