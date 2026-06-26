@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Host unit tests (native, runs cargo test) ──────────────────────────────
+  test:
+    name: Host tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test (kangaroos)
+        run: cargo test -p kangaroos
+
+  # ── Cross-compile checks for all ARM targets ───────────────────────────────
+  cross:
+    name: Build · ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: thumbv6m-none-eabi
+          - target: thumbv7m-none-eabi
+          - target: thumbv7em-none-eabihf
+          - target: thumbv8m.base-none-eabi
+          - target: thumbv8m.main-none-eabi
+          - target: thumbv8m.main-none-eabihf
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: cargo build (kangaroos)
+        run: cargo build -p kangaroos --target ${{ matrix.target }}
+      - name: cargo build --release (kangaroos)
+        run: cargo build -p kangaroos --target ${{ matrix.target }} --release
+
+  # ── blinky example (thumbv7m only — matches the QEMU target) ──────────────
+  blinky:
+    name: Build · blinky
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7m-none-eabi
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo build (blinky)
+        run: cargo build -p blinky --target thumbv7m-none-eabi
+      - name: cargo build with defmt (blinky)
+        run: cargo build -p blinky --target thumbv7m-none-eabi --features defmt
+
+  # ── Formatting & Clippy ────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: thumbv7m-none-eabi
+      - uses: Swatinem/rust-cache@v2
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+      - name: clippy (host)
+        run: cargo clippy -p kangaroos -- -D warnings
+      - name: clippy (thumbv7m)
+        run: cargo clippy -p kangaroos --target thumbv7m-none-eabi -- -D warnings
