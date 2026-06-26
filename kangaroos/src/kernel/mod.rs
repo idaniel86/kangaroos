@@ -20,6 +20,12 @@ pub struct Kernel<const N: usize> {
     pub(crate) tasks: [Tcb; N],
 }
 
+impl<const N: usize> Default for Kernel<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const N: usize> Kernel<N> {
     /// Construct a kernel with all task slots uninitialised.
     /// `const fn` so it can initialise a `static`.
@@ -29,7 +35,10 @@ impl<const N: usize> Kernel<N> {
     /// `0xFF` (255) as the empty-list sentinel; allowing index 255 would
     /// make task 255 indistinguishable from "no task".
     pub const fn new() -> Self {
-        assert!(N <= 254, "Kernel<N>: N must be \u{2264} 254 (0xFF is the wait-list sentinel)");
+        assert!(
+            N <= 254,
+            "Kernel<N>: N must be \u{2264} 254 (0xFF is the wait-list sentinel)"
+        );
         Kernel {
             tasks: [Tcb::zeroed(); N],
         }
@@ -43,7 +52,14 @@ impl<const N: usize> Kernel<N> {
     pub fn start(&mut self, cpu_freq_hz: u32) -> ! {
         unsafe {
             #[cfg(feature = "defmt")]
-            { let n = crate::TASK_COUNT; defmt::info!("kernel: starting, initial tasks={=usize} cpu={=u32}Hz", n, cpu_freq_hz); }
+            {
+                let n = crate::TASK_COUNT;
+                defmt::info!(
+                    "kernel: starting, initial tasks={=usize} cpu={=u32}Hz",
+                    n,
+                    cpu_freq_hz
+                );
+            }
 
             // Publish the task-array pointer so interrupt handlers can reach it.
             crate::TASKS_PTR = self.tasks.as_mut_ptr();
@@ -101,7 +117,8 @@ impl<const N: usize> Kernel<N> {
             let reload = cpu_freq_hz / 1000 - 1;
             p.SYST.set_reload(reload);
             p.SYST.clear_current();
-            p.SYST.set_clock_source(cortex_m::peripheral::syst::SystClkSource::Core);
+            p.SYST
+                .set_clock_source(cortex_m::peripheral::syst::SystClkSource::Core);
             p.SYST.enable_interrupt();
             p.SYST.enable_counter();
 
@@ -132,7 +149,10 @@ pub fn systick_handler() {
     // Verify stack canaries for all live tasks (skip Dead and Uninit slots).
     unsafe {
         for i in 0..crate::TASK_COUNT {
-            if matches!(crate::ktask(i).state, crate::kernel::tcb::TaskState::Dead | crate::kernel::tcb::TaskState::Uninit) {
+            if matches!(
+                crate::ktask(i).state,
+                crate::kernel::tcb::TaskState::Dead | crate::kernel::tcb::TaskState::Uninit
+            ) {
                 continue;
             }
             if !crate::arch::Arch::canary_check(crate::ktask(i).stack_base) {

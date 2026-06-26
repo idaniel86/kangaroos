@@ -51,15 +51,15 @@ global_asm!(
     ".thumb_func",
     ".global SVCall",
     "SVCall:",
-    "    bl    svc_first_task_sp",    // r0 = TASKS[0].sp  (clobbers lr — fine,
-    "                    ",           //   we restore EXC_RETURN from the task stack)
+    "    bl    svc_first_task_sp", // r0 = TASKS[0].sp  (clobbers lr — fine,
+    "                    ",        //   we restore EXC_RETURN from the task stack)
     "    msr   psp, r0",
     "    movs  r1, #2",
-    "    msr   control, r1",          // SPSEL=1: Thread mode uses PSP after return
+    "    msr   control, r1", // SPSEL=1: Thread mode uses PSP after return
     "    isb",
-    "    ldmia r0!, {{r4-r11, lr}}",  // pop software frame; lr = 0xFFFFFFFD
-    "    msr   psp, r0",              // PSP now → hardware frame
-    "    bx    lr",                   // valid EXC_RETURN from Handler mode → task runs
+    "    ldmia r0!, {{r4-r11, lr}}", // pop software frame; lr = 0xFFFFFFFD
+    "    msr   psp, r0",             // PSP now → hardware frame
+    "    bx    lr",                  // valid EXC_RETURN from Handler mode → task runs
 );
 
 /// Build an initial stack frame so that the first restore from PendSV (or
@@ -85,32 +85,34 @@ global_asm!(
 /// Returns the value to store in `Tcb::sp`.
 pub fn stack_init(stack: &mut [u32], entry: fn() -> !) -> usize {
     let n = stack.len();
-    assert!(n >= 21, "stack must be at least 21 words (84 bytes): 17 frame + 4 canary");
+    assert!(
+        n >= 21,
+        "stack must be at least 21 words (84 bytes): 17 frame + 4 canary"
+    );
 
     // Hardware exception frame
-    stack[n - 1] = 0x0100_0000;                    // xPSR: Thumb bit
-    stack[n - 2] = entry as usize as u32 & !1;     // PC (bit 0 cleared; T-bit in xPSR)
-    stack[n - 3] = task_exit as *const () as usize as u32 | 1;  // LR: trap if task returns
-    stack[n - 4] = 0;                               // R12
-    stack[n - 5] = 0;                               // R3
-    stack[n - 6] = 0;                               // R2
-    stack[n - 7] = 0;                               // R1
-    stack[n - 8] = 0;                               // R0
+    stack[n - 1] = 0x0100_0000; // xPSR: Thumb bit
+    stack[n - 2] = entry as usize as u32 & !1; // PC (bit 0 cleared; T-bit in xPSR)
+    stack[n - 3] = task_exit as *const () as usize as u32 | 1; // LR: trap if task returns
+    stack[n - 4] = 0; // R12
+    stack[n - 5] = 0; // R3
+    stack[n - 6] = 0; // R2
+    stack[n - 7] = 0; // R1
+    stack[n - 8] = 0; // R0
 
     // Software frame (as if PendSV just ran for this task)
-    stack[n - 9]  = 0xFFFF_FFFD; // EXC_RETURN: Thread + PSP + no FPU frame
-    stack[n - 10] = 0;           // R11
-    stack[n - 11] = 0;           // R10
-    stack[n - 12] = 0;           // R9
-    stack[n - 13] = 0;           // R8
-    stack[n - 14] = 0;           // R7
-    stack[n - 15] = 0;           // R6
-    stack[n - 16] = 0;           // R5
-    stack[n - 17] = 0;           // R4  ← SP points here
+    stack[n - 9] = 0xFFFF_FFFD; // EXC_RETURN: Thread + PSP + no FPU frame
+    stack[n - 10] = 0; // R11
+    stack[n - 11] = 0; // R10
+    stack[n - 12] = 0; // R9
+    stack[n - 13] = 0; // R8
+    stack[n - 14] = 0; // R7
+    stack[n - 15] = 0; // R6
+    stack[n - 16] = 0; // R5
+    stack[n - 17] = 0; // R4  ← SP points here
 
     core::ptr::addr_of!(stack[n - 17]) as usize
 }
-
 
 /// Trap executed if a task function ever returns.
 /// Tasks should loop forever; this is just a safety net.

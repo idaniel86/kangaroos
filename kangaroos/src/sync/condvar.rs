@@ -45,6 +45,12 @@ pub struct Condvar {
 unsafe impl Sync for Condvar {}
 unsafe impl Send for Condvar {}
 
+impl Default for Condvar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Condvar {
     /// Create a new unnamed condition variable. Prefer the [`condvar!`] macro
     /// for named statics.
@@ -82,7 +88,11 @@ impl Condvar {
         crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
             #[cfg(feature = "defmt")]
-            defmt::debug!("condvar {}: '{}' waiting", id, crate::ktask(crate::CURRENT_TASK).name);
+            defmt::debug!(
+                "condvar {}: '{}' waiting",
+                id,
+                crate::ktask(crate::CURRENT_TASK).name
+            );
             scheduler::wait_list_push(&mut inner.wait_head, crate::CURRENT_TASK);
             scheduler::block_current();
             // Release the mutex inside the same critical section.
@@ -113,7 +123,11 @@ impl Condvar {
             let idx = scheduler::wait_list_pop_highest(&mut inner.wait_head);
             let preempt = scheduler::unblock(idx);
             #[cfg(feature = "defmt")]
-            defmt::debug!("condvar {}: notify_one, woke '{}'", id, crate::ktask(idx).name);
+            defmt::debug!(
+                "condvar {}: notify_one, woke '{}'",
+                id,
+                crate::ktask(idx).name
+            );
             preempt
         });
 
@@ -138,7 +152,11 @@ impl Condvar {
                     preempt = true;
                 }
                 #[cfg(feature = "defmt")]
-                defmt::debug!("condvar {}: notify_all, woke '{}'", id, crate::ktask(idx).name);
+                defmt::debug!(
+                    "condvar {}: notify_all, woke '{}'",
+                    id,
+                    crate::ktask(idx).name
+                );
             }
             preempt
         });

@@ -61,30 +61,25 @@ global_asm!(
     ".thumb_func",
     ".global SVCall",
     "SVCall:",
-    "    bl    svc_first_task_sp",    // r0 = first task SP; PSPLIM set inside
-
+    "    bl    svc_first_task_sp", // r0 = first task SP; PSPLIM set inside
     // Restore r4-r7
-    "    ldmia r0!, {{r4-r7}}",       // r0 = base+16
-
+    "    ldmia r0!, {{r4-r7}}", // r0 = base+16
     // Restore r8-r11 (via low-reg pairs)
-    "    ldmia r0!, {{r1, r2}}",      // r1=saved r8, r2=saved r9
+    "    ldmia r0!, {{r1, r2}}", // r1=saved r8, r2=saved r9
     "    mov   r8, r1",
     "    mov   r9, r2",
-    "    ldmia r0!, {{r1, r2}}",      // r1=saved r10, r2=saved r11
+    "    ldmia r0!, {{r1, r2}}", // r1=saved r10, r2=saved r11
     "    mov   r10, r1",
     "    mov   r11, r2",
-
     // Load EXC_RETURN; advance r0 to hardware frame
-    "    ldr   r1, [r0]",             // r1 = 0xFFFF_FFFD
-    "    adds  r0, r0, #4",           // r0 = base+36 = hardware frame address
-
+    "    ldr   r1, [r0]",   // r1 = 0xFFFF_FFFD
+    "    adds  r0, r0, #4", // r0 = base+36 = hardware frame address
     // Install PSP and switch Thread mode to use it
     "    msr   psp, r0",
     "    movs  r2, #2",
-    "    msr   control, r2",          // SPSEL=1: Thread mode → PSP
+    "    msr   control, r2", // SPSEL=1: Thread mode → PSP
     "    isb",
-
-    "    bx    r1",                   // EXC_RETURN: launches first task
+    "    bx    r1", // EXC_RETURN: launches first task
 );
 
 // ---------------------------------------------------------------------------
@@ -104,39 +99,32 @@ global_asm!(
     ".thumb_func",
     ".global PendSV",
     "PendSV:",
-
     // ---- Save current task ----
-    "    mrs   r0, psp",              // r0 = PSP
-
-    "    subs  r0, r0, #36",          // allocate 9 words; r0 = base
-    "    stmia r0!, {{r4-r7}}",       // [base+0..12] = r4-r7;   r0 = base+16
-
-    "    mov   r4, r8",               // copy high regs through r4-r7
+    "    mrs   r0, psp",        // r0 = PSP
+    "    subs  r0, r0, #36",    // allocate 9 words; r0 = base
+    "    stmia r0!, {{r4-r7}}", // [base+0..12] = r4-r7;   r0 = base+16
+    "    mov   r4, r8",         // copy high regs through r4-r7
     "    mov   r5, r9",
     "    mov   r6, r10",
     "    mov   r7, r11",
-    "    stmia r0!, {{r4-r7}}",       // [base+16..28] = r8-r11;  r0 = base+32
-
+    "    stmia r0!, {{r4-r7}}", // [base+16..28] = r8-r11;  r0 = base+32
     "    mov   r4, lr",
-    "    str   r4, [r0]",             // [base+32] = EXC_RETURN
-
-    "    subs  r0, r0, #32",          // r0 = base
-    "    ldmia r0!, {{r4-r7}}",       // restore r4-r7; r0 = base+16
-    "    subs  r0, r0, #16",          // r0 = base (pass to C function)
-
+    "    str   r4, [r0]",       // [base+32] = EXC_RETURN
+    "    subs  r0, r0, #32",    // r0 = base
+    "    ldmia r0!, {{r4-r7}}", // restore r4-r7; r0 = base+16
+    "    subs  r0, r0, #16",    // r0 = base (pass to C function)
     // Updates PSPLIM for the next task; returns new task SP in r0.
     "    bl    pendsv_save_and_switch",
-
     // ---- Restore new task ----
-    "    ldmia r0!, {{r4-r7}}",       // r4-r7 restored;          r0 = base+16
-    "    ldmia r0!, {{r1, r2}}",      // r1=saved r8, r2=saved r9;r0 = base+24
+    "    ldmia r0!, {{r4-r7}}",  // r4-r7 restored;          r0 = base+16
+    "    ldmia r0!, {{r1, r2}}", // r1=saved r8, r2=saved r9;r0 = base+24
     "    mov   r8, r1",
     "    mov   r9, r2",
-    "    ldmia r0!, {{r1, r2}}",      // r1=saved r10, r2=saved r11; r0=base+32
+    "    ldmia r0!, {{r1, r2}}", // r1=saved r10, r2=saved r11; r0=base+32
     "    mov   r10, r1",
     "    mov   r11, r2",
-    "    ldr   r1, [r0]",             // r1 = EXC_RETURN
-    "    adds  r0, r0, #4",           // r0 = base+36 = new PSP
+    "    ldr   r1, [r0]",   // r1 = EXC_RETURN
+    "    adds  r0, r0, #4", // r0 = base+36 = new PSP
     "    msr   psp, r0",
     "    bx    r1",
 );
@@ -159,44 +147,39 @@ global_asm!(
     ".thumb_func",
     ".global PendSV",
     "PendSV:",
-
     // ---- Save current task ----
     "    mrs   r0, psp",
     "    mrs   r1, control",
-    "    tst   r1, #4",               // Z=1 if FPCA==0 (task did not use FPU)
+    "    tst   r1, #4", // Z=1 if FPCA==0 (task did not use FPU)
     "    beq   1f",
-    "    vstmdb r0!, {{s16-s31}}",    // push callee-saved FPU regs; r0 -= 64
+    "    vstmdb r0!, {{s16-s31}}", // push callee-saved FPU regs; r0 -= 64
     "1:",
-
-    "    subs  r0, r0, #36",          // allocate integer frame; r0 = base
-    "    stmia r0!, {{r4-r7}}",       // [base+0..12] = r4-r7;   r0 = base+16
+    "    subs  r0, r0, #36",    // allocate integer frame; r0 = base
+    "    stmia r0!, {{r4-r7}}", // [base+0..12] = r4-r7;   r0 = base+16
     "    mov   r4, r8",
     "    mov   r5, r9",
     "    mov   r6, r10",
     "    mov   r7, r11",
-    "    stmia r0!, {{r4-r7}}",       // [base+16..28] = r8-r11;  r0 = base+32
+    "    stmia r0!, {{r4-r7}}", // [base+16..28] = r8-r11;  r0 = base+32
     "    mov   r4, lr",
-    "    str   r4, [r0]",             // [base+32] = EXC_RETURN
+    "    str   r4, [r0]", // [base+32] = EXC_RETURN
     "    subs  r0, r0, #32",
-    "    ldmia r0!, {{r4-r7}}",       // restore r4-r7; r0 = base+16
-    "    subs  r0, r0, #16",          // r0 = base
-
-    "    bl    pendsv_save_and_switch",// updates PSPLIM; r0 = new SP
-
+    "    ldmia r0!, {{r4-r7}}",         // restore r4-r7; r0 = base+16
+    "    subs  r0, r0, #16",            // r0 = base
+    "    bl    pendsv_save_and_switch", // updates PSPLIM; r0 = new SP
     // ---- Restore new task ----
-    "    ldmia r0!, {{r4-r7}}",       // r0 = base+16
-    "    ldmia r0!, {{r1, r2}}",      // r1=saved r8, r2=saved r9
+    "    ldmia r0!, {{r4-r7}}",  // r0 = base+16
+    "    ldmia r0!, {{r1, r2}}", // r1=saved r8, r2=saved r9
     "    mov   r8, r1",
     "    mov   r9, r2",
-    "    ldmia r0!, {{r1, r2}}",      // r1=saved r10, r2=saved r11
+    "    ldmia r0!, {{r1, r2}}", // r1=saved r10, r2=saved r11
     "    mov   r10, r1",
     "    mov   r11, r2",
-    "    ldr   r1, [r0]",             // r1 = EXC_RETURN
-    "    adds  r0, r0, #4",           // r0 = base+36
-
-    "    tst   r1, #0x10",            // bit 4=0 → extended (FPU) frame
+    "    ldr   r1, [r0]",   // r1 = EXC_RETURN
+    "    adds  r0, r0, #4", // r0 = base+36
+    "    tst   r1, #0x10",  // bit 4=0 → extended (FPU) frame
     "    bne   2f",
-    "    vldmia r0!, {{s16-s31}}",    // restore callee-saved FPU regs; r0+=64
+    "    vldmia r0!, {{s16-s31}}", // restore callee-saved FPU regs; r0+=64
     "2:",
     "    msr   psp, r0",
     "    bx    r1",
@@ -302,7 +285,10 @@ unsafe extern "C" fn pendsv_save_and_switch(current_sp: usize) -> usize {
 /// ```
 pub fn stack_init(stack: &mut [u32], entry: fn() -> !) -> usize {
     let n = stack.len();
-    assert!(n >= 21, "stack must be at least 21 words (84 bytes): 17 frame + 4 canary");
+    assert!(
+        n >= 21,
+        "stack must be at least 21 words (84 bytes): 17 frame + 4 canary"
+    );
 
     // Hardware exception frame
     stack[n - 1] = 0x0100_0000;
@@ -315,15 +301,15 @@ pub fn stack_init(stack: &mut [u32], entry: fn() -> !) -> usize {
     stack[n - 8] = 0; // R0
 
     // Software frame (as-if saved by PendSV — no FPU context)
-    stack[n - 9]  = 0xFFFF_FFFD; // EXC_RETURN: Thread + PSP + no FPU
-    stack[n - 10] = 0;           // R11
-    stack[n - 11] = 0;           // R10
-    stack[n - 12] = 0;           // R9
-    stack[n - 13] = 0;           // R8
-    stack[n - 14] = 0;           // R7
-    stack[n - 15] = 0;           // R6
-    stack[n - 16] = 0;           // R5
-    stack[n - 17] = 0;           // R4  ← SP points here
+    stack[n - 9] = 0xFFFF_FFFD; // EXC_RETURN: Thread + PSP + no FPU
+    stack[n - 10] = 0; // R11
+    stack[n - 11] = 0; // R10
+    stack[n - 12] = 0; // R9
+    stack[n - 13] = 0; // R8
+    stack[n - 14] = 0; // R7
+    stack[n - 15] = 0; // R6
+    stack[n - 16] = 0; // R5
+    stack[n - 17] = 0; // R4  ← SP points here
 
     core::ptr::addr_of!(stack[n - 17]) as usize
 }

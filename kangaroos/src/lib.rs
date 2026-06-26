@@ -8,9 +8,9 @@ extern crate std;
 
 pub mod arch;
 pub mod channel;
-pub(crate) mod port;
 pub(crate) mod kernel;
 pub mod mem;
+pub(crate) mod port;
 pub mod sync;
 pub mod task;
 pub mod timer;
@@ -24,7 +24,7 @@ use kernel::tcb::Tcb;
 pub use kernel::{Kernel, systick_handler};
 
 // Re-export the spawn API so applications need only `use kangaroos::Spawner`.
-pub use task::{Spawner, SpawnToken};
+pub use task::{SpawnToken, Spawner};
 
 // Re-export Phase 6 extended sync primitives at the crate root.
 pub use sync::{Condvar, EventGroup};
@@ -66,8 +66,7 @@ macro_rules! mutex {
 #[macro_export]
 macro_rules! condvar {
     ($var:ident) => {
-        static $var: $crate::sync::Condvar =
-            $crate::sync::Condvar::new_named(stringify!($var));
+        static $var: $crate::sync::Condvar = $crate::sync::Condvar::new_named(stringify!($var));
     };
 }
 
@@ -92,8 +91,7 @@ macro_rules! event_group {
 #[macro_export]
 macro_rules! once {
     ($var:ident) => {
-        static $var: $crate::sync::Once =
-            $crate::sync::Once::new_named(stringify!($var));
+        static $var: $crate::sync::Once = $crate::sync::Once::new_named(stringify!($var));
     };
 }
 

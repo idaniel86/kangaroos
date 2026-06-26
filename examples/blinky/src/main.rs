@@ -1,13 +1,13 @@
 #![no_std]
 #![no_main]
 
+use core::panic::PanicInfo;
 use cortex_m_rt::exception;
-#[cfg(feature = "defmt")]
-use defmt_semihosting as _;  // pull in transport
 #[cfg(not(feature = "defmt"))]
 use cortex_m_semihosting::hprintln;
-use core::panic::PanicInfo;
-use kangaroos::{timer::Duration, main, task, task::sleep, Spawner};
+#[cfg(feature = "defmt")]
+use defmt_semihosting as _; // pull in transport
+use kangaroos::{Spawner, main, task, task::sleep, timer::Duration};
 
 // SEM_A starts at 1 so task_a fires first; SEM_B starts at 0.
 kangaroos::semaphore!(SEM_A, 1, 1);
