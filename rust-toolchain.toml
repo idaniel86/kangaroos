@@ -4,5 +4,8 @@ targets = [
     "thumbv6m-none-eabi",
     "thumbv7m-none-eabi",
     "thumbv7em-none-eabihf",
+    "thumbv8m.base-none-eabi",
+    "thumbv8m.main-none-eabi",
+    "thumbv8m.main-none-eabihf",
 ]
 components = ["rustfmt", "clippy", "llvm-tools-preview"]
