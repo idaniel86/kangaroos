@@ -67,9 +67,15 @@ pub(crate) mod v7em_fpu;
 #[cfg(armv8m)]
 pub(crate) mod v8m;
 
-// Catch unsupported targets at compile time rather than silently producing a
-// binary with no scheduler code.
-#[cfg(not(any(armv6m, armv7m, armv7em, armv8m)))]
+// Host mock arch — used by unit tests running on the development machine.
+// Not compiled for any ARM target.
+#[cfg(not(target_arch = "arm"))]
+pub(crate) mod host;
+
+// Catch unsupported ARM targets at compile time rather than silently producing
+// a binary with no scheduler code.  The guard intentionally excludes non-ARM
+// builds (host unit tests) so `cargo test` does not trip this error.
+#[cfg(all(target_arch = "arm", not(any(armv6m, armv7m, armv7em, armv8m))))]
 compile_error!(
     "No supported Cortex-M variant detected. \
      Build with --target thumbv6m-none-eabi, thumbv7m-none-eabi, \
@@ -93,3 +99,8 @@ pub(crate) use v7em_fpu::V7emFpu as Arch;
 
 #[cfg(armv8m)]
 pub(crate) use v8m::V8m as Arch;
+
+// Host: resolve to the mock context so the rest of the crate compiles
+// on non-ARM targets (needed for `cargo test`).
+#[cfg(not(target_arch = "arm"))]
+pub(crate) use host::HostContext as Arch;

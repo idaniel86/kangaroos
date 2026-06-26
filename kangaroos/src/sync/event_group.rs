@@ -82,7 +82,7 @@ impl EventGroup {
         let id = super::PrimName(self.name, self as *const _ as u32);
         #[cfg(feature = "defmt")]
         defmt::debug!("event_group {}: set mask={=u32:#x}", id, mask);
-        let (new_bits, need_preempt) = cortex_m::interrupt::free(|_| unsafe {
+        let (new_bits, need_preempt) = crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
             inner.bits |= mask;
             let mut preempt = false;
@@ -155,7 +155,7 @@ impl EventGroup {
         });
 
         if need_preempt {
-            cortex_m::peripheral::SCB::set_pendsv();
+            crate::port::trigger_pendsv();
         }
 
         new_bits
@@ -163,14 +163,14 @@ impl EventGroup {
 
     /// Clear one or more bits without waking any waiting tasks.
     pub fn clear(&self, mask: u32) {
-        cortex_m::interrupt::free(|_| unsafe {
+        crate::port::interrupt_free(|| unsafe {
             (*self.inner.get()).bits &= !mask;
         });
     }
 
     /// Read the current bit state without blocking.
     pub fn get(&self) -> u32 {
-        cortex_m::interrupt::free(|_| unsafe { (*self.inner.get()).bits })
+        crate::port::interrupt_free(|| unsafe { (*self.inner.get()).bits })
     }
 
     /// Block until **any** of the bits in `mask` are set.
@@ -182,7 +182,7 @@ impl EventGroup {
         #[cfg(feature = "defmt")]
         let id = super::PrimName(self.name, self as *const _ as u32);
 
-        cortex_m::interrupt::free(|_| unsafe {
+        crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
             let matched = inner.bits & mask;
             if matched != 0 {
@@ -205,7 +205,7 @@ impl EventGroup {
         if must_block {
             // Switch away; set() writes the matched bits to wait_ptr before
             // unblocking, so they are ready when we resume.
-            cortex_m::peripheral::SCB::set_pendsv();
+            crate::port::trigger_pendsv();
         }
 
         // Return the bits that were matched, written by set() or the fast path.
@@ -223,7 +223,7 @@ impl EventGroup {
         #[cfg(feature = "defmt")]
         let id = super::PrimName(self.name, self as *const _ as u32);
 
-        cortex_m::interrupt::free(|_| unsafe {
+        crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
             if inner.bits & mask == mask {
                 // Fast path: all requested bits are already set.
@@ -240,7 +240,7 @@ impl EventGroup {
         });
 
         if must_block {
-            cortex_m::peripheral::SCB::set_pendsv();
+            crate::port::trigger_pendsv();
         }
     }
 
@@ -253,7 +253,7 @@ impl EventGroup {
     /// # Safety
     /// Must be called from an interrupt handler or inside `interrupt::free`.
     pub unsafe fn set_from_isr(&self, mask: u32) -> bool {
-        cortex_m::interrupt::free(|_| unsafe {
+        crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
             inner.bits |= mask;
             let mut preempt = false;

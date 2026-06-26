@@ -100,7 +100,7 @@ impl Instant {
     /// blocks all configurable-priority exceptions — including SysTick even
     /// when it is configured at priority 0x00 — for the duration of the read.
     pub fn now() -> Instant {
-        cortex_m::interrupt::free(|_| {
+        crate::port::interrupt_free(|| {
             // SAFETY: TICK is only written from the SysTick handler; reading it
             // inside interrupt::free guarantees a non-torn u64 read on all
             // Cortex-M variants (PRIMASK blocks SysTick regardless of its
@@ -154,7 +154,7 @@ pub struct Timer {
 impl Timer {
     /// Create a one-shot timer that fires once after `delay`.
     pub fn after(delay: Duration) -> Timer {
-        let now = cortex_m::interrupt::free(|_| unsafe { crate::kernel::scheduler::TICK });
+        let now = crate::port::interrupt_free(|| unsafe { crate::kernel::scheduler::TICK });
         Timer {
             next: now.wrapping_add(delay.as_ticks()),
             period: None,
@@ -165,7 +165,7 @@ impl Timer {
     /// from now.
     pub fn every(period: Duration) -> Timer {
         let ticks = period.as_ticks();
-        let now = cortex_m::interrupt::free(|_| unsafe { crate::kernel::scheduler::TICK });
+        let now = crate::port::interrupt_free(|| unsafe { crate::kernel::scheduler::TICK });
         Timer {
             next: now.wrapping_add(ticks),
             period: Some(ticks),

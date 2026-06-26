@@ -82,7 +82,7 @@ impl<T: Send, const N: usize> Pool<T, N> {
         let src = MaybeUninit::new(val);
         let mut slot: Option<u8> = None;
 
-        cortex_m::interrupt::free(|_| unsafe {
+        crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.0.get();
             if inner.free_head != 0xFF {
                 let s = inner.free_head;
@@ -121,7 +121,7 @@ impl<T: Send, const N: usize> Pool<T, N> {
         let src = MaybeUninit::new(val);
         let mut must_block = false;
 
-        cortex_m::interrupt::free(|_| unsafe {
+        crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.0.get();
             if inner.free_head != 0xFF {
                 // Fast path: slot available — copy value in immediately.
@@ -152,7 +152,7 @@ impl<T: Send, const N: usize> Pool<T, N> {
             // Switch away.  Execution resumes here after PoolBox::drop copies
             // our value into the freed slot and writes the slot index back into
             // wait_ptr.
-            cortex_m::peripheral::SCB::set_pendsv();
+            crate::port::trigger_pendsv();
         }
 
         // Both paths write the assigned slot index into wait_ptr before we
@@ -168,7 +168,7 @@ impl<T: Send, const N: usize> Pool<T, N> {
     ///
     /// Walks the free list — O(free slots).  Intended for diagnostics only.
     pub fn available(&self) -> usize {
-        cortex_m::interrupt::free(|_| unsafe {
+        crate::port::interrupt_free(|| unsafe {
             let inner = &*self.0.get();
             let mut count = 0usize;
             let mut cur = inner.free_head;
@@ -230,7 +230,7 @@ impl<T, const N: usize> Drop for PoolBox<'_, T, N> {
 
         // Step 2: Return the slot to the pool or hand it to the highest-priority
         // task blocked in alloc_blocking.
-        let need_preempt = cortex_m::interrupt::free(|_| unsafe {
+        let need_preempt = crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.pool.0.get();
             if inner.wait_head != 0xFF {
                 // Direct handoff: copy the waiter's pending T (parked on its
@@ -250,7 +250,7 @@ impl<T, const N: usize> Drop for PoolBox<'_, T, N> {
         });
 
         if need_preempt {
-            cortex_m::peripheral::SCB::set_pendsv();
+            crate::port::trigger_pendsv();
         }
     }
 }

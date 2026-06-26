@@ -7,7 +7,7 @@ static mut IDLE_STACK: [u32; 64] = [0; 64];
 /// consumption during idle periods.
 fn idle_task() -> ! {
     loop {
-        cortex_m::asm::wfi();
+        crate::port::wfi();
     }
 }
 

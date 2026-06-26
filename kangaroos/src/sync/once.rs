@@ -73,7 +73,7 @@ impl Once {
         #[cfg(feature = "defmt")]
         let id = super::PrimName(self.name, self as *const _ as u32);
 
-        cortex_m::interrupt::free(|_| unsafe {
+        crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
             match inner.state {
                 OnceState::Done => {}
@@ -94,7 +94,7 @@ impl Once {
 
         if must_block {
             // Blocked waiter: resumes when the initialiser drains the wait list.
-            cortex_m::peripheral::SCB::set_pendsv();
+            crate::port::trigger_pendsv();
             return;
         }
 
@@ -110,7 +110,7 @@ impl Once {
 
         // Mark done and unblock all waiters.
         let mut need_preempt = false;
-        cortex_m::interrupt::free(|_| unsafe {
+        crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
             inner.state = OnceState::Done;
             // Drain the entire wait list.
@@ -125,13 +125,13 @@ impl Once {
         });
 
         if need_preempt {
-            cortex_m::peripheral::SCB::set_pendsv();
+            crate::port::trigger_pendsv();
         }
     }
 
     /// Returns `true` if the initialisation closure has already completed.
     pub fn is_completed(&self) -> bool {
-        cortex_m::interrupt::free(|_| unsafe {
+        crate::port::interrupt_free(|| unsafe {
             (*self.inner.get()).state == OnceState::Done
         })
     }

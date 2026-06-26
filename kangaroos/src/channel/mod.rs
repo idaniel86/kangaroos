@@ -103,7 +103,7 @@ impl<T: Send, const N: usize> Channel<T, N> {
         let mut must_block = false;
         let mut need_preempt = false;
 
-        cortex_m::interrupt::free(|_| unsafe {
+        crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.0.get();
 
             if inner.recv_head != 0xFF {
@@ -138,7 +138,7 @@ impl<T: Send, const N: usize> Channel<T, N> {
         });
 
         if need_preempt || must_block {
-            cortex_m::peripheral::SCB::set_pendsv();
+            crate::port::trigger_pendsv();
         }
         // `src` (MaybeUninit<T>) drops here without calling T::drop — correct:
         //   • direct handoff / buffer write: value was bitwise-moved to destination
@@ -152,7 +152,7 @@ impl<T: Send, const N: usize> Channel<T, N> {
         let mut sent = false;
         let mut need_preempt = false;
 
-        cortex_m::interrupt::free(|_| unsafe {
+        crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.0.get();
 
             if inner.recv_head != 0xFF {
@@ -177,7 +177,7 @@ impl<T: Send, const N: usize> Channel<T, N> {
         });
 
         if need_preempt {
-            cortex_m::peripheral::SCB::set_pendsv();
+            crate::port::trigger_pendsv();
         }
 
         if !sent {
@@ -198,7 +198,7 @@ impl<T: Send, const N: usize> Channel<T, N> {
         let mut must_block = false;
         let mut need_preempt = false;
 
-        cortex_m::interrupt::free(|_| unsafe {
+        crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.0.get();
 
             if inner.count > 0 {
@@ -238,11 +238,11 @@ impl<T: Send, const N: usize> Channel<T, N> {
         });
 
         if need_preempt {
-            cortex_m::peripheral::SCB::set_pendsv();
+            crate::port::trigger_pendsv();
         }
 
         if must_block {
-            cortex_m::peripheral::SCB::set_pendsv();
+            crate::port::trigger_pendsv();
             // Resume here: a sender has written into `slot` via our wait_ptr.
             return unsafe { slot.assume_init() };
         }
@@ -256,7 +256,7 @@ impl<T: Send, const N: usize> Channel<T, N> {
         let mut got_it = false;
         let mut need_preempt = false;
 
-        cortex_m::interrupt::free(|_| unsafe {
+        crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.0.get();
 
             if inner.count > 0 {
@@ -284,7 +284,7 @@ impl<T: Send, const N: usize> Channel<T, N> {
         });
 
         if need_preempt {
-            cortex_m::peripheral::SCB::set_pendsv();
+            crate::port::trigger_pendsv();
         }
 
         if got_it { Some(unsafe { slot.assume_init() }) } else { None }
