@@ -245,13 +245,19 @@ mod tests {
 
     #[test]
     fn duration_sub_normal() {
-        assert_eq!((Duration::from_ticks(10) - Duration::from_ticks(3)).as_ticks(), 7);
+        assert_eq!(
+            (Duration::from_ticks(10) - Duration::from_ticks(3)).as_ticks(),
+            7
+        );
     }
 
     #[test]
     fn duration_sub_saturates_at_zero() {
         // Underflow must saturate, not panic or wrap.
-        assert_eq!((Duration::from_ticks(3) - Duration::from_ticks(10)).as_ticks(), 0);
+        assert_eq!(
+            (Duration::from_ticks(3) - Duration::from_ticks(10)).as_ticks(),
+            0
+        );
     }
 
     #[test]
@@ -273,9 +279,13 @@ mod tests {
     #[test]
     fn instant_checked_duration_since() {
         let _g = TICK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { crate::kernel::scheduler::TICK = 200; }
+        unsafe {
+            crate::kernel::scheduler::TICK = 200;
+        }
         let t1 = Instant::now();
-        unsafe { crate::kernel::scheduler::TICK = 350; }
+        unsafe {
+            crate::kernel::scheduler::TICK = 350;
+        }
         let t2 = Instant::now();
 
         assert_eq!(t2.checked_duration_since(t1).unwrap().as_ticks(), 150);
@@ -286,9 +296,13 @@ mod tests {
     #[test]
     fn instant_saturating_duration_since() {
         let _g = TICK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { crate::kernel::scheduler::TICK = 500; }
+        unsafe {
+            crate::kernel::scheduler::TICK = 500;
+        }
         let t1 = Instant::now();
-        unsafe { crate::kernel::scheduler::TICK = 600; }
+        unsafe {
+            crate::kernel::scheduler::TICK = 600;
+        }
         let t2 = Instant::now();
 
         assert_eq!(t2.saturating_duration_since(t1).as_ticks(), 100);
@@ -299,7 +313,9 @@ mod tests {
     #[test]
     fn instant_same_tick_elapsed_zero() {
         let _g = TICK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { crate::kernel::scheduler::TICK = 999; }
+        unsafe {
+            crate::kernel::scheduler::TICK = 999;
+        }
         let t = Instant::now();
         // TICK is unchanged — elapsed duration must be zero.
         assert_eq!(Instant::now().saturating_duration_since(t).as_ticks(), 0);
@@ -308,9 +324,13 @@ mod tests {
     #[test]
     fn instant_ordering() {
         let _g = TICK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { crate::kernel::scheduler::TICK = 10; }
+        unsafe {
+            crate::kernel::scheduler::TICK = 10;
+        }
         let early = Instant::now();
-        unsafe { crate::kernel::scheduler::TICK = 20; }
+        unsafe {
+            crate::kernel::scheduler::TICK = 20;
+        }
         let late = Instant::now();
         assert!(early < late);
     }

@@ -44,7 +44,11 @@ impl<T> Mutex<T> {
     /// macro for named statics.
     pub const fn new(data: T) -> Self {
         Mutex {
-            inner: UnsafeCell::new(MutexInner { data, owner: 0xFF, wait_head: 0xFF }),
+            inner: UnsafeCell::new(MutexInner {
+                data,
+                owner: 0xFF,
+                wait_head: 0xFF,
+            }),
             name: None,
         }
     }
@@ -53,7 +57,11 @@ impl<T> Mutex<T> {
     /// that macro over calling this directly.
     pub const fn new_named(data: T, name: &'static str) -> Self {
         Mutex {
-            inner: UnsafeCell::new(MutexInner { data, owner: 0xFF, wait_head: 0xFF }),
+            inner: UnsafeCell::new(MutexInner {
+                data,
+                owner: 0xFF,
+                wait_head: 0xFF,
+            }),
             name: Some(name),
         }
     }
@@ -71,10 +79,17 @@ impl<T> Mutex<T> {
             let inner = &mut *self.inner.get();
             if inner.owner == 0xFF {
                 // Unlocked: claim it immediately.
-                debug_assert!(crate::CURRENT_TASK <= 254, "CURRENT_TASK exceeds u8 sentinel limit");
+                debug_assert!(
+                    crate::CURRENT_TASK <= 254,
+                    "CURRENT_TASK exceeds u8 sentinel limit"
+                );
                 inner.owner = crate::CURRENT_TASK as u8;
                 #[cfg(feature = "defmt")]
-                defmt::debug!("mutex {}: acquired by '{}'", id, crate::ktask(crate::CURRENT_TASK).name);
+                defmt::debug!(
+                    "mutex {}: acquired by '{}'",
+                    id,
+                    crate::ktask(crate::CURRENT_TASK).name
+                );
             } else {
                 // Locked: apply priority inheritance then sleep.
                 let cur_idx = crate::CURRENT_TASK;
@@ -84,13 +99,22 @@ impl<T> Mutex<T> {
                 if cur_prio < owner_prio {
                     // Boost owner to the waiter's (higher) priority.
                     #[cfg(feature = "defmt")]
-                    defmt::debug!("mutex {}: PI boost '{}' prio {=u8} -> {=u8}",
-                        id, crate::ktask(owner_idx).name, owner_prio, cur_prio);
+                    defmt::debug!(
+                        "mutex {}: PI boost '{}' prio {=u8} -> {=u8}",
+                        id,
+                        crate::ktask(owner_idx).name,
+                        owner_prio,
+                        cur_prio
+                    );
                     crate::ktask(owner_idx).priority = cur_prio;
                 }
                 #[cfg(feature = "defmt")]
-                defmt::debug!("mutex {}: contended, '{}' blocking, owner='{}'",
-                    id, crate::ktask(cur_idx).name, crate::ktask(owner_idx).name);
+                defmt::debug!(
+                    "mutex {}: contended, '{}' blocking, owner='{}'",
+                    id,
+                    crate::ktask(cur_idx).name,
+                    crate::ktask(owner_idx).name
+                );
                 scheduler::wait_list_push(&mut inner.wait_head, cur_idx);
                 scheduler::block_current();
                 must_block = true;
@@ -102,7 +126,10 @@ impl<T> Mutex<T> {
             crate::port::trigger_pendsv();
         }
 
-        MutexGuard { mutex: self, _not_send: PhantomData }
+        MutexGuard {
+            mutex: self,
+            _not_send: PhantomData,
+        }
     }
 
     /// Attempt to acquire the lock without blocking.
@@ -127,7 +154,10 @@ impl<T> Mutex<T> {
         let acquired = crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
             if inner.owner == 0xFF {
-                debug_assert!(crate::CURRENT_TASK <= 254, "CURRENT_TASK exceeds u8 sentinel limit");
+                debug_assert!(
+                    crate::CURRENT_TASK <= 254,
+                    "CURRENT_TASK exceeds u8 sentinel limit"
+                );
                 inner.owner = crate::CURRENT_TASK as u8;
                 true
             } else {
@@ -135,7 +165,10 @@ impl<T> Mutex<T> {
             }
         });
         if acquired {
-            Some(MutexGuard { mutex: self, _not_send: PhantomData })
+            Some(MutexGuard {
+                mutex: self,
+                _not_send: PhantomData,
+            })
         } else {
             None
         }
@@ -162,16 +195,27 @@ impl<T> Mutex<T> {
             if inner.wait_head != 0xFF {
                 // Transfer ownership directly to the highest-priority waiter.
                 let next_owner = scheduler::wait_list_pop_highest(&mut inner.wait_head);
-                debug_assert!(next_owner <= 254, "next_owner {next_owner} exceeds u8 sentinel limit");
+                debug_assert!(
+                    next_owner <= 254,
+                    "next_owner {next_owner} exceeds u8 sentinel limit"
+                );
                 inner.owner = next_owner as u8;
                 need_preempt = scheduler::unblock(next_owner);
                 #[cfg(feature = "defmt")]
-                defmt::debug!("mutex {}: released by '{}', granted to '{}'",
-                    id, crate::ktask(old_owner).name, crate::ktask(next_owner).name);
+                defmt::debug!(
+                    "mutex {}: released by '{}', granted to '{}'",
+                    id,
+                    crate::ktask(old_owner).name,
+                    crate::ktask(next_owner).name
+                );
             } else {
                 inner.owner = 0xFF;
                 #[cfg(feature = "defmt")]
-                defmt::debug!("mutex {}: released by '{}'", id, crate::ktask(old_owner).name);
+                defmt::debug!(
+                    "mutex {}: released by '{}'",
+                    id,
+                    crate::ktask(old_owner).name
+                );
             }
         });
 

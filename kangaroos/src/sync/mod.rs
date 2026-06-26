@@ -20,7 +20,7 @@ impl defmt::Format for PrimName {
     fn format(&self, f: defmt::Formatter) {
         match self.0 {
             Some(n) => defmt::write!(f, "'{}'", n),
-            None    => defmt::write!(f, "@{:#010x}", self.1),
+            None => defmt::write!(f, "@{:#010x}", self.1),
         }
     }
 }

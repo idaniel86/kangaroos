@@ -37,6 +37,12 @@ pub struct Once {
 // SAFETY: single-core Cortex-M; all mutations guarded by `interrupt::free`.
 unsafe impl Sync for Once {}
 
+impl Default for Once {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Once {
     /// Create an unnamed `Once`. Prefer the [`once!`] macro for named statics.
     pub const fn new() -> Self {
@@ -83,8 +89,11 @@ impl Once {
                 }
                 OnceState::Running => {
                     #[cfg(feature = "defmt")]
-                    defmt::debug!("once {}: '{}' waiting for initialisation",
-                        id, crate::ktask(crate::CURRENT_TASK).name);
+                    defmt::debug!(
+                        "once {}: '{}' waiting for initialisation",
+                        id,
+                        crate::ktask(crate::CURRENT_TASK).name
+                    );
                     scheduler::wait_list_push(&mut inner.wait_head, crate::CURRENT_TASK);
                     scheduler::block_current();
                     must_block = true;
@@ -105,7 +114,9 @@ impl Once {
 
         // Run the user-supplied initialisation closure outside any critical section.
         #[cfg(feature = "defmt")]
-        defmt::debug!("once {}: '{}' initialising", id, unsafe { crate::ktask(crate::CURRENT_TASK).name });
+        defmt::debug!("once {}: '{}' initialising", id, unsafe {
+            crate::ktask(crate::CURRENT_TASK).name
+        });
         f();
 
         // Mark done and unblock all waiters.
@@ -120,7 +131,11 @@ impl Once {
                     need_preempt = true;
                 }
                 #[cfg(feature = "defmt")]
-                defmt::debug!("once {}: initialised, woke '{}'", id, crate::ktask(idx).name);
+                defmt::debug!(
+                    "once {}: initialised, woke '{}'",
+                    id,
+                    crate::ktask(idx).name
+                );
             }
         });
 
@@ -131,9 +146,7 @@ impl Once {
 
     /// Returns `true` if the initialisation closure has already completed.
     pub fn is_completed(&self) -> bool {
-        crate::port::interrupt_free(|| unsafe {
-            (*self.inner.get()).state == OnceState::Done
-        })
+        crate::port::interrupt_free(|| unsafe { (*self.inner.get()).state == OnceState::Done })
     }
 }
 
@@ -152,9 +165,15 @@ mod tests {
         COUNT.store(0, Ordering::Relaxed);
 
         let once = Once::new();
-        once.call_once(|| { COUNT.fetch_add(1, Ordering::Relaxed); });
-        once.call_once(|| { COUNT.fetch_add(1, Ordering::Relaxed); });
-        once.call_once(|| { COUNT.fetch_add(1, Ordering::Relaxed); });
+        once.call_once(|| {
+            COUNT.fetch_add(1, Ordering::Relaxed);
+        });
+        once.call_once(|| {
+            COUNT.fetch_add(1, Ordering::Relaxed);
+        });
+        once.call_once(|| {
+            COUNT.fetch_add(1, Ordering::Relaxed);
+        });
 
         assert_eq!(COUNT.load(Ordering::Relaxed), 1);
     }
@@ -163,11 +182,15 @@ mod tests {
     fn once_second_call_is_noop() {
         let once = Once::new();
         let mut ran = false;
-        once.call_once(|| { ran = true; });
+        once.call_once(|| {
+            ran = true;
+        });
         assert!(ran);
 
         ran = false;
-        once.call_once(|| { ran = true; }); // state is Done — must not run
+        once.call_once(|| {
+            ran = true;
+        }); // state is Done — must not run
         assert!(!ran);
     }
 

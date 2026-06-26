@@ -49,10 +49,19 @@ pub struct Pool<T, const N: usize>(UnsafeCell<PoolInner<T, N>>);
 // SAFETY: single-core Cortex-M; all mutations are guarded by `interrupt::free`.
 unsafe impl<T: Send, const N: usize> Sync for Pool<T, N> {}
 
+impl<T: Send, const N: usize> Default for Pool<T, N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Send, const N: usize> Pool<T, N> {
     /// Create an empty pool.  `const fn` so it can initialise a `static`.
     pub const fn new() -> Self {
-        assert!(N <= 255, "Pool<T, N>: capacity N must be \u{2264} 255 (u8 index limit)");
+        assert!(
+            N <= 255,
+            "Pool<T, N>: capacity N must be \u{2264} 255 (u8 index limit)"
+        );
 
         // Build the initial free list: slot 0 → 1 → … → N-1 → 0xFF.
         let mut next = [0u8; N];
@@ -97,7 +106,11 @@ impl<T: Send, const N: usize> Pool<T, N> {
         });
 
         match slot {
-            Some(s) => Some(PoolBox { pool: self, slot: s, _not_sync: PhantomData }),
+            Some(s) => Some(PoolBox {
+                pool: self,
+                slot: s,
+                _not_sync: PhantomData,
+            }),
             None => {
                 // Pool exhausted: re-materialise `val` and drop it properly.
                 drop(unsafe { src.assume_init() });
@@ -161,7 +174,11 @@ impl<T: Send, const N: usize> Pool<T, N> {
 
         // `src` (MaybeUninit<T>) goes out of scope here.  Its drop glue is a
         // no-op, so T is NOT dropped — the bytes now live in nodes[slot].
-        PoolBox { pool: self, slot, _not_sync: PhantomData }
+        PoolBox {
+            pool: self,
+            slot,
+            _not_sync: PhantomData,
+        }
     }
 
     /// Return the number of free slots.
@@ -360,9 +377,13 @@ mod tests {
         DROP_COUNT.store(0, Ordering::Relaxed);
 
         let pool: Pool<Tracked, 1> = Pool::new();
-        let _b = pool.alloc(Tracked).unwrap();  // succeeds, now full
-        let rejected = pool.alloc(Tracked);     // fails → value must be dropped
+        let _b = pool.alloc(Tracked).unwrap(); // succeeds, now full
+        let rejected = pool.alloc(Tracked); // fails → value must be dropped
         assert!(rejected.is_none());
-        assert_eq!(DROP_COUNT.load(Ordering::Relaxed), 1, "rejected value not dropped");
+        assert_eq!(
+            DROP_COUNT.load(Ordering::Relaxed),
+            1,
+            "rejected value not dropped"
+        );
     }
 }

@@ -58,6 +58,12 @@ pub struct Channel<T, const N: usize>(UnsafeCell<ChannelInner<T, N>>);
 // SAFETY: single-core Cortex-M; all mutations are guarded by `interrupt::free`.
 unsafe impl<T: Send, const N: usize> Sync for Channel<T, N> {}
 
+impl<T: Send, const N: usize> Default for Channel<T, N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Send, const N: usize> Channel<T, N> {
     /// Create an empty channel.  `const fn` so it can initialise a `static`.
     ///
@@ -65,7 +71,10 @@ impl<T: Send, const N: usize> Channel<T, N> {
     /// Panics if `N > 254`. The blocked-sender/receiver wait-lists use `u8`
     /// indices with `0xFF` (255) as the empty-list sentinel.
     pub const fn new() -> Self {
-        assert!(N <= 254, "Channel<T, N>: N must be \u{2264} 254 (0xFF is the wait-list sentinel)");
+        assert!(
+            N <= 254,
+            "Channel<T, N>: N must be \u{2264} 254 (0xFF is the wait-list sentinel)"
+        );
         Channel(UnsafeCell::new(ChannelInner {
             buf: [const { MaybeUninit::uninit() }; N],
             head: 0,
@@ -117,11 +126,7 @@ impl<T: Send, const N: usize> Channel<T, N> {
                 }
             } else if inner.count < N {
                 // Room in the ring buffer.
-                core::ptr::copy_nonoverlapping(
-                    src.as_ptr(),
-                    inner.buf[inner.tail].as_mut_ptr(),
-                    1,
-                );
+                core::ptr::copy_nonoverlapping(src.as_ptr(), inner.buf[inner.tail].as_mut_ptr(), 1);
                 inner.tail = (inner.tail + 1) % N;
                 inner.count += 1;
             } else {
@@ -164,11 +169,7 @@ impl<T: Send, const N: usize> Channel<T, N> {
                 }
                 sent = true;
             } else if inner.count < N {
-                core::ptr::copy_nonoverlapping(
-                    src.as_ptr(),
-                    inner.buf[inner.tail].as_mut_ptr(),
-                    1,
-                );
+                core::ptr::copy_nonoverlapping(src.as_ptr(), inner.buf[inner.tail].as_mut_ptr(), 1);
                 inner.tail = (inner.tail + 1) % N;
                 inner.count += 1;
                 sent = true;
@@ -287,7 +288,11 @@ impl<T: Send, const N: usize> Channel<T, N> {
             crate::port::trigger_pendsv();
         }
 
-        if got_it { Some(unsafe { slot.assume_init() }) } else { None }
+        if got_it {
+            Some(unsafe { slot.assume_init() })
+        } else {
+            None
+        }
     }
 }
 
@@ -296,13 +301,21 @@ impl<T: Send, const N: usize> Channel<T, N> {
 // ---------------------------------------------------------------------------
 
 impl<T: Send, const N: usize> SendChannel<T> for Channel<T, N> {
-    fn send_blocking(&self, val: T) { self.send_impl(val) }
-    fn try_send_now(&self, val: T) -> bool { self.try_send_impl(val) }
+    fn send_blocking(&self, val: T) {
+        self.send_impl(val)
+    }
+    fn try_send_now(&self, val: T) -> bool {
+        self.try_send_impl(val)
+    }
 }
 
 impl<T: Send, const N: usize> RecvChannel<T> for Channel<T, N> {
-    fn recv_blocking(&self) -> T { self.recv_impl() }
-    fn try_recv_now(&self) -> Option<T> { self.try_recv_impl() }
+    fn recv_blocking(&self) -> T {
+        self.recv_impl()
+    }
+    fn try_recv_now(&self) -> Option<T> {
+        self.try_recv_impl()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -413,7 +426,7 @@ mod tests {
         assert!(tx.try_send(1));
         assert!(tx.try_send(2));
         assert_eq!(rx.try_recv(), Some(1)); // head advances to slot 1
-        assert!(tx.try_send(3));            // tail wraps back to slot 0
+        assert!(tx.try_send(3)); // tail wraps back to slot 0
         assert_eq!(rx.try_recv(), Some(2));
         assert_eq!(rx.try_recv(), Some(3));
         assert_eq!(rx.try_recv(), None);
@@ -437,12 +450,20 @@ mod tests {
         let tx = ch.sender();
         let rx = ch.receiver();
 
-        assert!(tx.try_send(Tracked));  // buffered
+        assert!(tx.try_send(Tracked)); // buffered
         assert!(!tx.try_send(Tracked)); // full → rejected and dropped
-        assert_eq!(DROP_COUNT.load(Ordering::Relaxed), 1, "rejected value not dropped");
+        assert_eq!(
+            DROP_COUNT.load(Ordering::Relaxed),
+            1,
+            "rejected value not dropped"
+        );
 
         drop(rx.try_recv()); // consume buffered item
-        assert_eq!(DROP_COUNT.load(Ordering::Relaxed), 2, "buffered value not dropped on recv+drop");
+        assert_eq!(
+            DROP_COUNT.load(Ordering::Relaxed),
+            2,
+            "buffered value not dropped on recv+drop"
+        );
     }
 
     #[test]

@@ -4,7 +4,10 @@
 //! be called from interrupt handlers.
 
 use crate::arch::ArchContext as _;
-use crate::kernel::{tcb::{TaskState, Tcb}, Kernel};
+use crate::kernel::{
+    Kernel,
+    tcb::{TaskState, Tcb},
+};
 
 // ---------------------------------------------------------------------------
 // SpawnToken + Spawner — Embassy-style spawn API
@@ -15,12 +18,12 @@ use crate::kernel::{tcb::{TaskState, Tcb}, Kernel};
 /// Produced by calling a `#[kangaroos::task]`-annotated function with its
 /// arguments. Pass the token to [`Spawner::spawn`] inside `#[kangaroos::main]`.
 pub struct SpawnToken {
-    stack_ptr:  *mut u32,
-    stack_len:  usize,      // in words
-    priority:   u8,
+    stack_ptr: *mut u32,
+    stack_len: usize, // in words
+    priority: u8,
     time_slice: u8,
-    entry:      fn() -> !,
-    name:       &'static str,
+    entry: fn() -> !,
+    name: &'static str,
 }
 
 // SAFETY: SpawnToken is only created in `fn main()` before any ISR fires,
@@ -33,14 +36,21 @@ impl SpawnToken {
     /// not intended for direct use.
     #[doc(hidden)]
     pub fn new(
-        stack_ptr:  *mut u32,
-        stack_len:  usize,
-        priority:   u8,
+        stack_ptr: *mut u32,
+        stack_len: usize,
+        priority: u8,
         time_slice: u8,
-        entry:      fn() -> !,
-        name:       &'static str,
+        entry: fn() -> !,
+        name: &'static str,
     ) -> Self {
-        SpawnToken { stack_ptr, stack_len, priority, time_slice, entry, name }
+        SpawnToken {
+            stack_ptr,
+            stack_len,
+            priority,
+            time_slice,
+            entry,
+            name,
+        }
     }
 }
 
@@ -100,12 +110,13 @@ impl Spawner {
 /// # Safety
 /// `tasks_ptr` must point to an array of at least `max_tasks` [`Tcb`] slots.
 /// `stack_ptr` must point to a `'static mut [u32]` of `stack_len` words.
+#[allow(clippy::too_many_arguments)]
 unsafe fn spawn_into(
     tasks_ptr: *mut Tcb,
     max_tasks: usize,
     stack_ptr: *mut u32,
     stack_len: usize,
-    priority:  u8,
+    priority: u8,
     time_slice: u8,
     entry: fn() -> !,
     name: &'static str,
@@ -136,10 +147,14 @@ unsafe fn spawn_into(
         core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
         crate::TASK_COUNT += 1;
         #[cfg(feature = "defmt")]
-        defmt::info!("task '{}': spawned, priority={=u8} stack={=usize}B", name, priority, stack_len * 4);
+        defmt::info!(
+            "task '{}': spawned, priority={=u8} stack={=usize}B",
+            name,
+            priority,
+            stack_len * 4
+        );
     });
 }
-
 
 ///
 /// The stack slice must have a `'static` lifetime (i.e. come from a
@@ -179,7 +194,12 @@ pub fn spawn<const N: usize>(
         core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
         crate::TASK_COUNT += 1;
         #[cfg(feature = "defmt")]
-        defmt::info!("task '{}': spawned, priority={=u8} stack={=usize}B", name, priority, stack.len() * 4);
+        defmt::info!(
+            "task '{}': spawned, priority={=u8} stack={=usize}B",
+            name,
+            priority,
+            stack.len() * 4
+        );
     });
 }
 
@@ -194,7 +214,9 @@ pub fn yield_now() {
         crate::ktask(crate::CURRENT_TASK).slice_remaining = 0;
     });
     #[cfg(feature = "defmt")]
-    defmt::debug!("task '{}': yielding", unsafe { crate::ktask(crate::CURRENT_TASK).name });
+    defmt::debug!("task '{}': yielding", unsafe {
+        crate::ktask(crate::CURRENT_TASK).name
+    });
     crate::port::trigger_pendsv();
 }
 
@@ -221,9 +243,11 @@ pub fn sleep(duration: crate::timer::Duration) {
         crate::kernel::scheduler::TICK.wrapping_add(duration.as_ticks())
     });
     #[cfg(feature = "defmt")]
-    defmt::debug!("task '{}': sleeping {=u64}ms",
+    defmt::debug!(
+        "task '{}': sleeping {=u64}ms",
         unsafe { crate::ktask(crate::CURRENT_TASK).name },
-        duration.as_millis());
+        duration.as_millis()
+    );
     sleep_until(deadline);
 }
 
@@ -249,7 +273,9 @@ pub(crate) fn sleep_until(deadline: u64) {
 /// this; it is provided for completeness and one-shot task patterns.
 pub fn exit() -> ! {
     #[cfg(feature = "defmt")]
-    defmt::debug!("task '{}': exiting", unsafe { crate::ktask(crate::CURRENT_TASK).name });
+    defmt::debug!("task '{}': exiting", unsafe {
+        crate::ktask(crate::CURRENT_TASK).name
+    });
     crate::port::interrupt_free(|| unsafe {
         crate::ktask(crate::CURRENT_TASK).state = TaskState::Dead;
     });
