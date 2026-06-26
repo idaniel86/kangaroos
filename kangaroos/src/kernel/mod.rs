@@ -77,6 +77,22 @@ impl<const N: usize> Kernel<N> {
             // any user ISR. Together 0x00 and 0xFF are guaranteed distinct on
             // every Cortex-M variant (unlike the old 0xFE/0xFF pair which
             // collapsed to the same effective level on chips with ≤3 bits).
+            //
+            // PRIMASK interaction: `cortex_m::interrupt::free` sets PRIMASK=1
+            // (CPSID I), which blocks ALL exceptions with configurable priority
+            // — including SysTick — regardless of the numeric priority value.
+            // Only NMI and HardFault (fixed priority −2/−1) are immune to
+            // PRIMASK. This means short critical sections (e.g. reading the
+            // 64-bit TICK counter) still correctly gate SysTick even at
+            // priority 0x00. Ticks that arrive while PRIMASK=1 are pended and
+            // execute immediately after the critical section exits; no ticks
+            // are lost, but they may be delayed by the critical section length.
+            //
+            // Constraint for application code: any user ISR that calls into
+            // the kernel API must be configured with a priority value strictly
+            // greater than 0x00 (numerically), i.e. lower precedence than
+            // SysTick. An ISR at priority 0x00 would be at the same level as
+            // SysTick and could not be preempted by it (and vice versa).
             p.SCB.set_priority(SystemHandler::SysTick, 0x00);
 
             // 1 ms tick.
