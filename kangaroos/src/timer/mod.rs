@@ -91,10 +91,20 @@ impl Instant {
     ///
     /// Reads the global tick counter inside a critical section to prevent a
     /// torn read on 32-bit architectures.
+    ///
+    /// # 32-bit torn-read protection
+    /// `TICK` is a `u64`. On 32-bit Cortex-M, a bare `u64` load compiles to
+    /// two 32-bit `LDR` instructions. If SysTick fires between them and the
+    /// low word overflows into the high word, the caller would see a torn
+    /// (inconsistent) value. `interrupt::free` sets `PRIMASK = 1`, which
+    /// blocks all configurable-priority exceptions — including SysTick even
+    /// when it is configured at priority 0x00 — for the duration of the read.
     pub fn now() -> Instant {
         cortex_m::interrupt::free(|_| {
             // SAFETY: TICK is only written from the SysTick handler; reading it
-            // inside interrupt::free on a single-core device is race-free.
+            // inside interrupt::free guarantees a non-torn u64 read on all
+            // Cortex-M variants (PRIMASK blocks SysTick regardless of its
+            // configured priority value).
             Instant(unsafe { crate::kernel::scheduler::TICK })
         })
     }

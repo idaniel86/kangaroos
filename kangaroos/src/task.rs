@@ -214,6 +214,9 @@ pub fn current_priority() -> u8 {
 /// the global tick counter reaches `now + duration.as_ticks()`. A duration of
 /// zero causes a yield to any equal-priority task but returns on the next tick.
 pub fn sleep(duration: crate::timer::Duration) {
+    // Read TICK inside a critical section: a bare u64 load is two 32-bit
+    // instructions on Cortex-M; PRIMASK (set by interrupt::free) blocks
+    // SysTick for the duration of the read, preventing a torn value.
     let deadline = cortex_m::interrupt::free(|_| unsafe {
         crate::kernel::scheduler::TICK.wrapping_add(duration.as_ticks())
     });
