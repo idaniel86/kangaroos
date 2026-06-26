@@ -66,15 +66,8 @@ pub(crate) fn tick() -> bool {
         TICK = TICK.wrapping_add(1);
         let now = TICK;
 
-        // Wake any tasks whose sleep deadline has passed.
-        for i in 0..crate::TASK_COUNT {
-            if let TaskState::Sleeping(deadline) = crate::ktask(i).state {
-                if now >= deadline {
-                    crate::ktask(i).state = TaskState::Ready;
-                }
-            }
-        }
-
+        // Hoist both globals: one memory load each, shared across all loops.
+        let count = crate::TASK_COUNT;
         let current = crate::CURRENT_TASK;
 
         // Guard: scheduler not yet started (svc_first_task_sp has not run yet).
@@ -82,32 +75,50 @@ pub(crate) fn tick() -> bool {
             return false;
         }
 
+        // cur_prio hoisted before the fused loop so it is available inside it.
         let cur_prio = crate::ktask(current).priority;
+        let mut should_preempt = false;
 
-        // Preempt immediately if a higher-priority task has become ready.
-        for i in 0..crate::TASK_COUNT {
-            if i != current
-                && matches!(crate::ktask(i).state, TaskState::Ready)
-                && crate::ktask(i).priority < cur_prio
-            {
-                return true;
+        // Fused single pass: wake sleeping tasks whose deadline has passed, and
+        // simultaneously check whether any ready task has higher priority than
+        // the current one. `continue` on i == current avoids creating an
+        // aliased `&mut Tcb` while `cur` is borrowed later.
+        for i in 0..count {
+            if i == current {
+                continue;
+            }
+            let t = crate::ktask(i); // one pointer load per iteration
+            if let TaskState::Sleeping(deadline) = t.state {
+                if now >= deadline {
+                    t.state = TaskState::Ready;
+                }
+            }
+            // Covers both freshly-woken sleepers and tasks already ready.
+            if matches!(t.state, TaskState::Ready) && t.priority < cur_prio {
+                should_preempt = true;
+                // Do not break — remaining sleepers must still be woken.
             }
         }
 
-        // Decrement the running task's time slice.
-        let slice = crate::ktask(current).slice_remaining;
-        if slice > 0 {
-            crate::ktask(current).slice_remaining = slice - 1;
+        if should_preempt {
+            return true;
+        }
+
+        // Decrement the running task's time slice (single ktask call).
+        let cur = crate::ktask(current);
+        if cur.slice_remaining > 0 {
+            cur.slice_remaining -= 1;
         }
 
         // On slice expiry, rotate if an equal-priority peer is ready.
-        if crate::ktask(current).slice_remaining == 0 {
-            crate::ktask(current).slice_remaining = crate::ktask(current).time_slice;
-            for i in 0..crate::TASK_COUNT {
-                if i != current
-                    && matches!(crate::ktask(i).state, TaskState::Ready)
-                    && crate::ktask(i).priority == cur_prio
-                {
+        if cur.slice_remaining == 0 {
+            cur.slice_remaining = cur.time_slice;
+            for i in 0..count {
+                if i == current {
+                    continue;
+                }
+                let t = crate::ktask(i); // one pointer load per iteration
+                if matches!(t.state, TaskState::Ready) && t.priority == cur_prio {
                     return true;
                 }
             }
