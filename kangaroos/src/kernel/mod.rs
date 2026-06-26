@@ -64,11 +64,20 @@ impl<const N: usize> Kernel<N> {
 
             let mut p = cortex_m::Peripherals::steal();
 
-            // PendSV must be the absolute lowest priority so it never splits a user ISR.
+            // PendSV: lowest effective priority on every Cortex-M variant.
+            // Writing 0xFF sets all implemented priority bits to 1; unimplemented
+            // bits are RAZ/WI, so the effective value is always the lowest
+            // possible level (0xC0 on 2-bit ARMv6-M, 0xE0 on 3-bit, 0xF0 on
+            // 4-bit, 0xFF on 8-bit). PendSV therefore never splits a user ISR.
             p.SCB.set_priority(SystemHandler::PendSV, 0xFF);
 
-            // SysTick one level above PendSV: fires the tick, then triggers PendSV.
-            p.SCB.set_priority(SystemHandler::SysTick, 0xFE);
+            // SysTick: priority 0 (highest on every Cortex-M profile).
+            // 0x00 is always maximum precedence regardless of how many priority
+            // bits the chip implements, keeping the tick non-interruptable by
+            // any user ISR. Together 0x00 and 0xFF are guaranteed distinct on
+            // every Cortex-M variant (unlike the old 0xFE/0xFF pair which
+            // collapsed to the same effective level on chips with ≤3 bits).
+            p.SCB.set_priority(SystemHandler::SysTick, 0x00);
 
             // 1 ms tick.
             let reload = cpu_freq_hz / 1000 - 1;
