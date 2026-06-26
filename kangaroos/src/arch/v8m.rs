@@ -155,6 +155,7 @@ global_asm!(
 global_asm!(
     ".syntax unified",
     ".thumb",
+    ".fpu fpv5-sp-d16",
     ".thumb_func",
     ".global PendSV",
     "PendSV:",

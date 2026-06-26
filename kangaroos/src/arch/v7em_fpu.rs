@@ -66,6 +66,7 @@ impl ArchContext for V7emFpu {
 global_asm!(
     ".syntax unified",
     ".thumb",
+    ".fpu fpv4-sp-d16",
     ".thumb_func",
     ".global PendSV",
     "PendSV:",
