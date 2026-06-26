@@ -2,6 +2,8 @@
 
 A preemptive real-time operating system for ARM Cortex-M microcontrollers, written in Rust (`no_std`).
 
+> **Note:** This project was created as an experiment using [GitHub Copilot](https://github.com/features/copilot) as an AI pair-programmer.
+
 ## Features
 
 - Fixed-priority preemptive scheduling with round-robin tiebreaking at equal priorities
