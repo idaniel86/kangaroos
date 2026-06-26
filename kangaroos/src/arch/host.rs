@@ -8,7 +8,6 @@
 /// The stack-frame layout mirrors the real ARMv7-M layout defined in
 /// `v7m.rs`; tests that inspect individual frame words can therefore
 /// share expectations with the embedded target.
-
 use super::ArchContext;
 
 /// Zero-sized dispatch token for the host mock arch.
@@ -42,25 +41,25 @@ impl ArchContext for HostContext {
         );
 
         // Hardware exception frame (8 words)
-        stack[n - 1] = 0x0100_0000;                 // xPSR: Thumb bit
-        stack[n - 2] = entry as usize as u32 & !1;  // PC
-        stack[n - 3] = 0xDEAD_0001;                 // LR sentinel
-        stack[n - 4] = 0;                            // R12
-        stack[n - 5] = 0;                            // R3
-        stack[n - 6] = 0;                            // R2
-        stack[n - 7] = 0;                            // R1
-        stack[n - 8] = 0;                            // R0
+        stack[n - 1] = 0x0100_0000; // xPSR: Thumb bit
+        stack[n - 2] = entry as usize as u32 & !1; // PC
+        stack[n - 3] = 0xDEAD_0001; // LR sentinel
+        stack[n - 4] = 0; // R12
+        stack[n - 5] = 0; // R3
+        stack[n - 6] = 0; // R2
+        stack[n - 7] = 0; // R1
+        stack[n - 8] = 0; // R0
 
         // Software frame (9 words, as-if-PendSV-saved)
-        stack[n - 9]  = 0xFFFF_FFFD;                // EXC_RETURN
-        stack[n - 10] = 0;                           // R11
-        stack[n - 11] = 0;                           // R10
-        stack[n - 12] = 0;                           // R9
-        stack[n - 13] = 0;                           // R8
-        stack[n - 14] = 0;                           // R7
-        stack[n - 15] = 0;                           // R6
-        stack[n - 16] = 0;                           // R5
-        stack[n - 17] = 0;                           // R4  ← initial SP
+        stack[n - 9] = 0xFFFF_FFFD; // EXC_RETURN
+        stack[n - 10] = 0; // R11
+        stack[n - 11] = 0; // R10
+        stack[n - 12] = 0; // R9
+        stack[n - 13] = 0; // R8
+        stack[n - 14] = 0; // R7
+        stack[n - 15] = 0; // R6
+        stack[n - 16] = 0; // R5
+        stack[n - 17] = 0; // R4  ← initial SP
 
         core::ptr::addr_of!(stack[n - 17]) as usize
     }
@@ -117,21 +116,28 @@ mod tests {
 
     #[test]
     fn stack_init_sp_within_stack() {
-        fn task_fn() -> ! { loop {} }
+        fn task_fn() -> ! {
+            loop {}
+        }
         let mut stack = [0u32; 32];
         HostContext::canary_init(&mut stack);
         let sp = HostContext::stack_init(&mut stack, task_fn);
 
         let stack_start = stack.as_ptr() as usize;
         let stack_end = stack_start + 32 * 4;
-        assert!(sp >= stack_start && sp < stack_end, "SP {sp:#x} is outside stack range");
+        assert!(
+            sp >= stack_start && sp < stack_end,
+            "SP {sp:#x} is outside stack range"
+        );
     }
 
     #[test]
     fn stack_init_frame_xpsr_has_thumb_bit() {
         // The initial xPSR must have bit 24 set (Thumb state) so the first
         // EXC_RETURN enters Thumb mode.
-        fn task_fn() -> ! { loop {} }
+        fn task_fn() -> ! {
+            loop {}
+        }
         let mut stack = [0u32; 32];
         let sp = HostContext::stack_init(&mut stack, task_fn);
 
@@ -143,17 +149,25 @@ mod tests {
         //   ...
         //   [16] xPSR ← offset 16 from initial SP
         let xpsr = unsafe { *(sp as *const u32).add(16) };
-        assert_eq!(xpsr, 0x0100_0000, "xPSR Thumb bit not set (got {xpsr:#010x})");
+        assert_eq!(
+            xpsr, 0x0100_0000,
+            "xPSR Thumb bit not set (got {xpsr:#010x})"
+        );
     }
 
     #[test]
     fn stack_init_frame_exc_return() {
-        fn task_fn() -> ! { loop {} }
+        fn task_fn() -> ! {
+            loop {}
+        }
         let mut stack = [0u32; 32];
         let sp = HostContext::stack_init(&mut stack, task_fn);
 
         // EXC_RETURN is the 9th word from the initial SP (index 8).
         let exc_return = unsafe { *(sp as *const u32).add(8) };
-        assert_eq!(exc_return, 0xFFFF_FFFD, "EXC_RETURN value wrong (got {exc_return:#010x})");
+        assert_eq!(
+            exc_return, 0xFFFF_FFFD,
+            "EXC_RETURN value wrong (got {exc_return:#010x})"
+        );
     }
 }

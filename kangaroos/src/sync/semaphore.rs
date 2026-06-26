@@ -75,12 +75,19 @@ impl Semaphore {
             if inner.count > 0 {
                 inner.count -= 1;
                 #[cfg(feature = "defmt")]
-                defmt::debug!("semaphore {}: taken by '{}', count={=u8}",
-                    id, crate::ktask(crate::CURRENT_TASK).name, inner.count);
+                defmt::debug!(
+                    "semaphore {}: taken by '{}', count={=u8}",
+                    id,
+                    crate::ktask(crate::CURRENT_TASK).name,
+                    inner.count
+                );
             } else {
                 #[cfg(feature = "defmt")]
-                defmt::debug!("semaphore {}: empty, '{}' blocking",
-                    id, crate::ktask(crate::CURRENT_TASK).name);
+                defmt::debug!(
+                    "semaphore {}: empty, '{}' blocking",
+                    id,
+                    crate::ktask(crate::CURRENT_TASK).name
+                );
                 scheduler::wait_list_push(&mut inner.wait_head, crate::CURRENT_TASK);
                 scheduler::block_current();
                 must_block = true;
@@ -136,7 +143,11 @@ impl Semaphore {
             } else {
                 // count == max and no waiters — token dropped.
                 #[cfg(feature = "defmt")]
-                defmt::warn!("semaphore {}: give dropped, count at max={=u8}", id, inner.max);
+                defmt::warn!(
+                    "semaphore {}: give dropped, count at max={=u8}",
+                    id,
+                    inner.max
+                );
             }
         });
 
@@ -181,11 +192,15 @@ mod tests {
     #[test]
     fn semaphore_give_increments() {
         let sem = Semaphore::new(0, 3);
-        sem.give(); assert_eq!(sem.count(), 1);
-        sem.give(); assert_eq!(sem.count(), 2);
-        sem.give(); assert_eq!(sem.count(), 3);
+        sem.give();
+        assert_eq!(sem.count(), 1);
+        sem.give();
+        assert_eq!(sem.count(), 2);
+        sem.give();
+        assert_eq!(sem.count(), 3);
         // At ceiling — token must be silently dropped.
-        sem.give(); assert_eq!(sem.count(), 3);
+        sem.give();
+        assert_eq!(sem.count(), 3);
     }
 
     #[test]
@@ -202,11 +217,11 @@ mod tests {
     #[test]
     fn semaphore_give_then_take_roundtrip() {
         let sem = Semaphore::new(2, 4);
-        assert!(sem.try_take());   // 2 → 1
-        assert!(sem.try_take());   // 1 → 0
-        sem.give();                // 0 → 1
+        assert!(sem.try_take()); // 2 → 1
+        assert!(sem.try_take()); // 1 → 0
+        sem.give(); // 0 → 1
         assert_eq!(sem.count(), 1);
-        assert!(sem.try_take());   // 1 → 0
-        assert!(!sem.try_take());  // still 0
+        assert!(sem.try_take()); // 1 → 0
+        assert!(!sem.try_take()); // still 0
     }
 }

@@ -78,7 +78,7 @@ impl Tcb {
 
 #[cfg(test)]
 mod tests {
-    use super::{Tcb, TaskState};
+    use super::{TaskState, Tcb};
     use core::mem;
 
     #[test]

@@ -1,11 +1,11 @@
-/// Thin hardware-abstraction wrappers over Cortex-M peripherals.
-///
-/// On `target_arch = "arm"` the real `cortex-m` hardware is used.
-/// On every other target (host unit-test builds) these are no-op stubs so
-/// all scheduler and sync logic compiles and runs without a physical CPU.
-///
-/// **All call sites in the kernel use `crate::port::*`; no module except
-/// `kernel::mod` and `arch::*` may reach into `cortex_m` directly.**
+// Thin hardware-abstraction wrappers over Cortex-M peripherals.
+//
+// On `target_arch = "arm"` the real `cortex-m` hardware is used.
+// On every other target (host unit-test builds) these are no-op stubs so
+// all scheduler and sync logic compiles and runs without a physical CPU.
+//
+// All call sites in the kernel use `crate::port::*`; no module except
+// `kernel::mod` and `arch::*` may reach into `cortex_m` directly.
 
 // ---------------------------------------------------------------------------
 // interrupt_free — critical section

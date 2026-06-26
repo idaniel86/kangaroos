@@ -43,6 +43,12 @@ pub struct EventGroup {
 unsafe impl Sync for EventGroup {}
 unsafe impl Send for EventGroup {}
 
+impl Default for EventGroup {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EventGroup {
     /// Create a new unnamed `EventGroup` with all bits cleared. Prefer the
     /// [`event_group!`] macro for named statics.
@@ -114,8 +120,12 @@ impl EventGroup {
                         preempt = true;
                     }
                     #[cfg(feature = "defmt")]
-                    defmt::debug!("event_group {}: wait_any satisfied, woke '{}' matched={=u32:#x}",
-                        id, crate::ktask(idx).name, matched);
+                    defmt::debug!(
+                        "event_group {}: wait_any satisfied, woke '{}' matched={=u32:#x}",
+                        id,
+                        crate::ktask(idx).name,
+                        matched
+                    );
                     // prev unchanged — it now links directly to `next`.
                 } else {
                     prev = cur;
@@ -143,8 +153,12 @@ impl EventGroup {
                         preempt = true;
                     }
                     #[cfg(feature = "defmt")]
-                    defmt::debug!("event_group {}: wait_all satisfied, woke '{}' mask={=u32:#x}",
-                        id, crate::ktask(idx).name, task_mask);
+                    defmt::debug!(
+                        "event_group {}: wait_all satisfied, woke '{}' mask={=u32:#x}",
+                        id,
+                        crate::ktask(idx).name,
+                        task_mask
+                    );
                 } else {
                     prev = cur;
                 }
@@ -193,8 +207,12 @@ impl EventGroup {
             } else {
                 // Slow path: store the full requested mask so set() can match.
                 #[cfg(feature = "defmt")]
-                defmt::debug!("event_group {}: wait_any blocking, '{}' mask={=u32:#x}",
-                    id, crate::ktask(crate::CURRENT_TASK).name, mask);
+                defmt::debug!(
+                    "event_group {}: wait_any blocking, '{}' mask={=u32:#x}",
+                    id,
+                    crate::ktask(crate::CURRENT_TASK).name,
+                    mask
+                );
                 crate::ktask(crate::CURRENT_TASK).wait_ptr = mask as usize;
                 scheduler::wait_list_push(&mut inner.wait_any_head, crate::CURRENT_TASK);
                 scheduler::block_current();
@@ -230,8 +248,12 @@ impl EventGroup {
                 inner.bits &= !mask;
             } else {
                 #[cfg(feature = "defmt")]
-                defmt::debug!("event_group {}: wait_all blocking, '{}' mask={=u32:#x}",
-                    id, crate::ktask(crate::CURRENT_TASK).name, mask);
+                defmt::debug!(
+                    "event_group {}: wait_all blocking, '{}' mask={=u32:#x}",
+                    id,
+                    crate::ktask(crate::CURRENT_TASK).name,
+                    mask
+                );
                 crate::ktask(crate::CURRENT_TASK).wait_ptr = mask as usize;
                 scheduler::wait_list_push(&mut inner.wait_all_head, crate::CURRENT_TASK);
                 scheduler::block_current();

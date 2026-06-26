@@ -66,21 +66,19 @@ impl ArchContext for V7emFpu {
 global_asm!(
     ".syntax unified",
     ".thumb",
+    ".fpu fpv4-sp-d16",
     ".thumb_func",
     ".global PendSV",
     "PendSV:",
-
     // ---- Save current task ----
     "    mrs   r0, psp",
     "    mrs   r1, control",
-    "    tst   r1, #4",              // Z=1 if FPCA==0 (task did not use FPU)
-    "    beq   1f",                  // skip FPU save
-    "    vstmdb r0!, {{s16-s31}}",   // push callee-saved FPU regs (s16-s31)
+    "    tst   r1, #4",            // Z=1 if FPCA==0 (task did not use FPU)
+    "    beq   1f",                // skip FPU save
+    "    vstmdb r0!, {{s16-s31}}", // push callee-saved FPU regs (s16-s31)
     "1:",
     "    stmdb r0!, {{r4-r11, lr}}", // push integer callee-saved + EXC_RETURN
-
     "    bl    pendsv_save_and_switch",
-
     // ---- Restore new task ----
     "    ldmia r0!, {{r4-r11, lr}}", // pop integer regs; lr = EXC_RETURN
     "    tst   lr, #0x10",           // bit 4=0 → extended (FPU) frame
@@ -106,7 +104,7 @@ global_asm!(
     "    bl    svc_first_task_sp",
     "    msr   psp, r0",
     "    movs  r1, #2",
-    "    msr   control, r1",         // SPSEL=1: Thread mode uses PSP
+    "    msr   control, r1", // SPSEL=1: Thread mode uses PSP
     "    isb",
     "    ldmia r0!, {{r4-r11, lr}}", // pop software frame; lr = 0xFFFF_FFFD
     "    msr   psp, r0",             // PSP → hardware frame
@@ -136,7 +134,10 @@ global_asm!(
 /// switches will save/restore s16–s31 automatically.
 pub fn stack_init(stack: &mut [u32], entry: fn() -> !) -> usize {
     let n = stack.len();
-    assert!(n >= 21, "stack must be at least 21 words (84 bytes): 17 frame + 4 canary");
+    assert!(
+        n >= 21,
+        "stack must be at least 21 words (84 bytes): 17 frame + 4 canary"
+    );
 
     // Hardware exception frame
     stack[n - 1] = 0x0100_0000;
@@ -149,15 +150,15 @@ pub fn stack_init(stack: &mut [u32], entry: fn() -> !) -> usize {
     stack[n - 8] = 0; // R0
 
     // Software frame (as-if saved by PendSV — no FPU context)
-    stack[n - 9]  = 0xFFFF_FFFD; // EXC_RETURN: Thread + PSP + no FPU
-    stack[n - 10] = 0;           // R11
-    stack[n - 11] = 0;           // R10
-    stack[n - 12] = 0;           // R9
-    stack[n - 13] = 0;           // R8
-    stack[n - 14] = 0;           // R7
-    stack[n - 15] = 0;           // R6
-    stack[n - 16] = 0;           // R5
-    stack[n - 17] = 0;           // R4  ← SP points here
+    stack[n - 9] = 0xFFFF_FFFD; // EXC_RETURN: Thread + PSP + no FPU
+    stack[n - 10] = 0; // R11
+    stack[n - 11] = 0; // R10
+    stack[n - 12] = 0; // R9
+    stack[n - 13] = 0; // R8
+    stack[n - 14] = 0; // R7
+    stack[n - 15] = 0; // R6
+    stack[n - 16] = 0; // R5
+    stack[n - 17] = 0; // R4  ← SP points here
 
     core::ptr::addr_of!(stack[n - 17]) as usize
 }

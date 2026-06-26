@@ -40,10 +40,7 @@ pub(crate) trait ArchContext {
         // spawn_task and is valid for the lifetime of the program.
         unsafe {
             let p = stack_base as *const u32;
-            *p == CANARY
-                && *p.add(1) == CANARY
-                && *p.add(2) == CANARY
-                && *p.add(3) == CANARY
+            *p == CANARY && *p.add(1) == CANARY && *p.add(2) == CANARY && *p.add(3) == CANARY
         }
     }
 
