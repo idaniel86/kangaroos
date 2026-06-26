@@ -2,6 +2,7 @@
 
 pub mod arch;
 pub mod channel;
+pub(crate) mod port;
 pub(crate) mod kernel;
 pub mod mem;
 pub mod sync;
@@ -93,7 +94,7 @@ macro_rules! once {
 // Provide a real millisecond timestamp for defmt when the feature is enabled.
 // TICK is incremented once per SysTick (1 kHz), so it equals ms since boot.
 // Truncating to u32 wraps every ~49 days — acceptable for debug sessions.
-#[cfg(feature = "defmt")]
+#[cfg(all(feature = "defmt", target_arch = "arm"))]
 defmt::timestamp!("{=u32}", {
     cortex_m::interrupt::free(|_| unsafe { kernel::scheduler::TICK as u32 })
 });

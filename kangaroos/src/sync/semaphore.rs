@@ -70,7 +70,7 @@ impl Semaphore {
         #[cfg(feature = "defmt")]
         let id = super::PrimName(self.name, self as *const _ as u32);
 
-        cortex_m::interrupt::free(|_| unsafe {
+        crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
             if inner.count > 0 {
                 inner.count -= 1;
@@ -89,7 +89,7 @@ impl Semaphore {
 
         if must_block {
             // Task resumes here after give() transfers the token.
-            cortex_m::peripheral::SCB::set_pendsv();
+            crate::port::trigger_pendsv();
         }
     }
 
@@ -98,7 +98,7 @@ impl Semaphore {
     /// Returns `true` if a token was acquired, `false` if the semaphore was
     /// at zero. Safe to call from interrupt handlers.
     pub fn try_take(&self) -> bool {
-        cortex_m::interrupt::free(|_| unsafe {
+        crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
             if inner.count > 0 {
                 inner.count -= 1;
@@ -121,7 +121,7 @@ impl Semaphore {
         #[cfg(feature = "defmt")]
         let id = super::PrimName(self.name, self as *const _ as u32);
 
-        cortex_m::interrupt::free(|_| unsafe {
+        crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
             if inner.wait_head != 0xFF {
                 // Hand the token directly to the highest-priority waiter.
@@ -141,12 +141,12 @@ impl Semaphore {
         });
 
         if need_preempt {
-            cortex_m::peripheral::SCB::set_pendsv();
+            crate::port::trigger_pendsv();
         }
     }
 
     /// Return the current token count.
     pub fn count(&self) -> u8 {
-        cortex_m::interrupt::free(|_| unsafe { (*self.inner.get()).count })
+        crate::port::interrupt_free(|| unsafe { (*self.inner.get()).count })
     }
 }

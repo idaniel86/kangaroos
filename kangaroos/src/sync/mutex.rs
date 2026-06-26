@@ -67,7 +67,7 @@ impl<T> Mutex<T> {
         #[cfg(feature = "defmt")]
         let id = super::PrimName(self.name, self as *const _ as u32);
 
-        cortex_m::interrupt::free(|_| unsafe {
+        crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
             if inner.owner == 0xFF {
                 // Unlocked: claim it immediately.
@@ -99,7 +99,7 @@ impl<T> Mutex<T> {
 
         if must_block {
             // Switch away; unlock_internal will grant ownership before we resume.
-            cortex_m::peripheral::SCB::set_pendsv();
+            crate::port::trigger_pendsv();
         }
 
         MutexGuard { mutex: self, _not_send: PhantomData }
@@ -124,7 +124,7 @@ impl<T> Mutex<T> {
     ///
     /// [`lock`]: Mutex::lock
     pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
-        let acquired = cortex_m::interrupt::free(|_| unsafe {
+        let acquired = crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
             if inner.owner == 0xFF {
                 debug_assert!(crate::CURRENT_TASK <= 254, "CURRENT_TASK exceeds u8 sentinel limit");
@@ -152,7 +152,7 @@ impl<T> Mutex<T> {
         #[cfg(feature = "defmt")]
         let id = super::PrimName(self.name, self as *const _ as u32);
 
-        cortex_m::interrupt::free(|_| unsafe {
+        crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
             let old_owner = inner.owner as usize;
 
@@ -176,7 +176,7 @@ impl<T> Mutex<T> {
         });
 
         if need_preempt {
-            cortex_m::peripheral::SCB::set_pendsv();
+            crate::port::trigger_pendsv();
         }
     }
 }

@@ -5,10 +5,21 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
-cortex-m-rt = "0.7"
 kangaroos-macros = { path = "../kangaroos-macros" }
 portable-atomic = { version = "1", default-features = false, features = ["critical-section"] }
+
+# cortex-m and cortex-m-rt are only needed when building for ARM Cortex-M.
+# Scoping them to cfg(target_arch = "arm") keeps them out of the dependency
+# graph for host unit-test builds (cargo test on x86_64/aarch64).
+[target.'cfg(target_arch = "arm")'.dependencies]
+cortex-m    = { version = "0.7", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7"
+
+[dev-dependencies]
+# Provide a critical-section implementation for the host test executor.
+# On ARM the cortex-m crate registers its own CS impl; on the host we need
+# the std-backed one so `critical_section::with` works in test helpers.
+critical-section = { version = "1", features = ["std"] }
 
 [features]
 default = []

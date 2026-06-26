@@ -79,7 +79,7 @@ impl Condvar {
         // the self-block are atomic.
         let _guard = core::mem::ManuallyDrop::new(guard);
 
-        cortex_m::interrupt::free(|_| unsafe {
+        crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
             #[cfg(feature = "defmt")]
             defmt::debug!("condvar {}: '{}' waiting", id, crate::ktask(crate::CURRENT_TASK).name);
@@ -94,7 +94,7 @@ impl Condvar {
 
         // Always trigger a context switch: this task just blocked itself.
         // If unlock_internal already set PENDSVSET the write is idempotent.
-        cortex_m::peripheral::SCB::set_pendsv();
+        crate::port::trigger_pendsv();
 
         // When this task is resumed by notify_one / notify_all, re-acquire
         // the mutex before returning the guard to the caller.
@@ -105,7 +105,7 @@ impl Condvar {
     pub fn notify_one(&self) {
         #[cfg(feature = "defmt")]
         let id = super::PrimName(self.name, self as *const _ as u32);
-        let need_preempt = cortex_m::interrupt::free(|_| unsafe {
+        let need_preempt = crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
             if inner.wait_head == 0xFF {
                 return false;
@@ -118,7 +118,7 @@ impl Condvar {
         });
 
         if need_preempt {
-            cortex_m::peripheral::SCB::set_pendsv();
+            crate::port::trigger_pendsv();
         }
     }
 
@@ -129,7 +129,7 @@ impl Condvar {
     pub fn notify_all(&self) {
         #[cfg(feature = "defmt")]
         let id = super::PrimName(self.name, self as *const _ as u32);
-        let need_preempt = cortex_m::interrupt::free(|_| unsafe {
+        let need_preempt = crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
             let mut preempt = false;
             while inner.wait_head != 0xFF {
@@ -144,7 +144,7 @@ impl Condvar {
         });
 
         if need_preempt {
-            cortex_m::peripheral::SCB::set_pendsv();
+            crate::port::trigger_pendsv();
         }
     }
 }

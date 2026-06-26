@@ -90,7 +90,7 @@ pub fn stack_init(stack: &mut [u32], entry: fn() -> !) -> usize {
     // Hardware exception frame
     stack[n - 1] = 0x0100_0000;                    // xPSR: Thumb bit
     stack[n - 2] = entry as usize as u32 & !1;     // PC (bit 0 cleared; T-bit in xPSR)
-    stack[n - 3] = task_exit as usize as u32 | 1;  // LR: trap if task returns
+    stack[n - 3] = task_exit as *const () as usize as u32 | 1;  // LR: trap if task returns
     stack[n - 4] = 0;                               // R12
     stack[n - 5] = 0;                               // R3
     stack[n - 6] = 0;                               // R2

@@ -3,6 +3,7 @@ pub(crate) mod scheduler;
 pub(crate) mod tcb;
 
 use crate::arch::ArchContext as _;
+#[cfg(target_arch = "arm")]
 use cortex_m::peripheral::scb::SystemHandler;
 use tcb::Tcb;
 
@@ -37,10 +38,11 @@ impl<const N: usize> Kernel<N> {
     /// launch the first task. This function never returns.
     ///
     /// `cpu_freq_hz` is used to program a 1 ms SysTick period.
+    #[cfg(target_arch = "arm")]
     pub fn start(&mut self, cpu_freq_hz: u32) -> ! {
         unsafe {
             #[cfg(feature = "defmt")]
-            defmt::info!("kernel: starting, initial tasks={=usize} cpu={=u32}Hz", crate::TASK_COUNT, cpu_freq_hz);
+            { let n = crate::TASK_COUNT; defmt::info!("kernel: starting, initial tasks={=usize} cpu={=u32}Hz", n, cpu_freq_hz); }
 
             // Publish the task-array pointer so interrupt handlers can reach it.
             crate::TASKS_PTR = self.tasks.as_mut_ptr();
@@ -118,13 +120,13 @@ impl<const N: usize> Kernel<N> {
 
 /// Drive the scheduler from the SysTick exception handler.
 ///
-/// ```rust
+/// ```rust,ignore
 /// #[exception]
 /// fn SysTick() { kernel::systick_handler(); }
 /// ```
 pub fn systick_handler() {
     if scheduler::tick() {
-        cortex_m::peripheral::SCB::set_pendsv();
+        crate::port::trigger_pendsv();
     }
 
     // Verify stack canaries for all live tasks (skip Dead and Uninit slots).

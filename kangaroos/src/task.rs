@@ -113,7 +113,7 @@ unsafe fn spawn_into(
     // Reconstruct the slice. Caller guarantees the memory is 'static.
     let stack = unsafe { core::slice::from_raw_parts_mut(stack_ptr, stack_len) };
 
-    cortex_m::interrupt::free(|_| unsafe {
+    crate::port::interrupt_free(|| unsafe {
         let idx = crate::TASK_COUNT;
         assert!(idx < max_tasks, "maximum task count exceeded");
 
@@ -153,7 +153,7 @@ pub fn spawn<const N: usize>(
     entry: fn() -> !,
     name: &'static str,
 ) {
-    cortex_m::interrupt::free(|_| unsafe {
+    crate::port::interrupt_free(|| unsafe {
         let idx = crate::TASK_COUNT;
         assert!(idx < N, "maximum task count exceeded");
 
@@ -190,12 +190,12 @@ pub fn spawn<const N: usize>(
 /// same or higher priority is ready, the calling task is re-scheduled
 /// immediately.
 pub fn yield_now() {
-    cortex_m::interrupt::free(|_| unsafe {
+    crate::port::interrupt_free(|| unsafe {
         crate::ktask(crate::CURRENT_TASK).slice_remaining = 0;
     });
     #[cfg(feature = "defmt")]
     defmt::debug!("task '{}': yielding", unsafe { crate::ktask(crate::CURRENT_TASK).name });
-    cortex_m::peripheral::SCB::set_pendsv();
+    crate::port::trigger_pendsv();
 }
 
 /// Return the static priority of the currently running task.
@@ -217,7 +217,7 @@ pub fn sleep(duration: crate::timer::Duration) {
     // Read TICK inside a critical section: a bare u64 load is two 32-bit
     // instructions on Cortex-M; PRIMASK (set by interrupt::free) blocks
     // SysTick for the duration of the read, preventing a torn value.
-    let deadline = cortex_m::interrupt::free(|_| unsafe {
+    let deadline = crate::port::interrupt_free(|| unsafe {
         crate::kernel::scheduler::TICK.wrapping_add(duration.as_ticks())
     });
     #[cfg(feature = "defmt")]
@@ -233,10 +233,10 @@ pub fn sleep(duration: crate::timer::Duration) {
 /// scheduling. The caller supplies an absolute tick deadline rather than a
 /// relative duration.
 pub(crate) fn sleep_until(deadline: u64) {
-    cortex_m::interrupt::free(|_| unsafe {
+    crate::port::interrupt_free(|| unsafe {
         crate::ktask(crate::CURRENT_TASK).state = TaskState::Sleeping(deadline);
     });
-    cortex_m::peripheral::SCB::set_pendsv();
+    crate::port::trigger_pendsv();
 }
 
 /// Terminate the current task.
@@ -250,11 +250,11 @@ pub(crate) fn sleep_until(deadline: u64) {
 pub fn exit() -> ! {
     #[cfg(feature = "defmt")]
     defmt::debug!("task '{}': exiting", unsafe { crate::ktask(crate::CURRENT_TASK).name });
-    cortex_m::interrupt::free(|_| unsafe {
+    crate::port::interrupt_free(|| unsafe {
         crate::ktask(crate::CURRENT_TASK).state = TaskState::Dead;
     });
-    cortex_m::peripheral::SCB::set_pendsv();
+    crate::port::trigger_pendsv();
     loop {
-        cortex_m::asm::wfi();
+        crate::port::wfi();
     }
 }
