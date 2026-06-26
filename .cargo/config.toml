@@ -1,6 +1,3 @@
-[build]
-target = "thumbv7em-none-eabihf"   # default target for examples
-
 [target.thumbv6m-none-eabi]
 rustflags = ["-C", "link-arg=-Tlink.x"]
 
@@ -10,7 +7,11 @@ rustflags = ["-C", "link-arg=-Tlink.x"]
 [target.thumbv7em-none-eabihf]
 rustflags = ["-C", "link-arg=-Tlink.x"]
 
-# Run unit tests on the host (Apple Silicon mac). The default build target is
-# ARM so an explicit target override is needed for host test runs.
-[alias]
-test-host = "test -p kangaroos --target aarch64-apple-darwin"
+[target.thumbv8m.base-none-eabi]
+rustflags = ["-C", "link-arg=-Tlink.x"]
+
+[target.thumbv8m.main-none-eabi]
+rustflags = ["-C", "link-arg=-Tlink.x"]
+
+[target.thumbv8m.main-none-eabihf]
+rustflags = ["-C", "link-arg=-Tlink.x"]

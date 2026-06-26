@@ -1,3 +1,4 @@
+#[cfg(target_arch = "arm")]
 pub(crate) mod idle;
 pub(crate) mod scheduler;
 pub(crate) mod tcb;
@@ -46,7 +47,6 @@ impl<const N: usize> Kernel<N> {
 
             // Publish the task-array pointer so interrupt handlers can reach it.
             crate::TASKS_PTR = self.tasks.as_mut_ptr();
-            crate::MAX_TASKS = N;
 
             // Register the always-ready idle task at the lowest priority.
             idle::register(self);

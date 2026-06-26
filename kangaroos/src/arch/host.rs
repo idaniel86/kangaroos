@@ -65,3 +65,95 @@ impl ArchContext for HostContext {
         core::ptr::addr_of!(stack[n - 17]) as usize
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::HostContext;
+    use crate::arch::ArchContext as _;
+
+    #[test]
+    fn canary_init_writes_dead_beef() {
+        let mut stack = [0u32; 8];
+        HostContext::canary_init(&mut stack);
+        const CANARY: u32 = 0xDEAD_BEEF;
+        assert_eq!(stack[0], CANARY);
+        assert_eq!(stack[1], CANARY);
+        assert_eq!(stack[2], CANARY);
+        assert_eq!(stack[3], CANARY);
+    }
+
+    #[test]
+    fn canary_init_does_not_touch_rest_of_stack() {
+        let mut stack = [0xABCD_1234u32; 8];
+        HostContext::canary_init(&mut stack);
+        // Words 4..7 must be unchanged.
+        assert!(stack[4..].iter().all(|&w| w == 0xABCD_1234));
+    }
+
+    #[test]
+    fn canary_check_valid() {
+        let mut stack = [0u32; 8];
+        HostContext::canary_init(&mut stack);
+        assert!(HostContext::canary_check(stack.as_ptr() as usize));
+    }
+
+    #[test]
+    fn canary_check_detects_single_word_corruption() {
+        let mut stack = [0u32; 8];
+        HostContext::canary_init(&mut stack);
+        for i in 0..4 {
+            stack[i] ^= 1; // flip one bit
+            assert!(
+                !HostContext::canary_check(stack.as_ptr() as usize),
+                "canary_check should fail when word {i} is corrupted"
+            );
+            stack[i] ^= 1; // restore
+        }
+    }
+
+    #[test]
+    fn stack_init_sp_within_stack() {
+        fn task_fn() -> ! { loop {} }
+        let mut stack = [0u32; 32];
+        HostContext::canary_init(&mut stack);
+        let sp = HostContext::stack_init(&mut stack, task_fn);
+
+        let stack_start = stack.as_ptr() as usize;
+        let stack_end = stack_start + 32 * 4;
+        assert!(sp >= stack_start && sp < stack_end, "SP {sp:#x} is outside stack range");
+    }
+
+    #[test]
+    fn stack_init_frame_xpsr_has_thumb_bit() {
+        // The initial xPSR must have bit 24 set (Thumb state) so the first
+        // EXC_RETURN enters Thumb mode.
+        fn task_fn() -> ! { loop {} }
+        let mut stack = [0u32; 32];
+        let sp = HostContext::stack_init(&mut stack, task_fn);
+
+        // Frame layout (from sp, low→high):
+        //   [0]  R4  (SW frame start / initial SP)
+        //   ...
+        //   [8]  EXC_RETURN
+        //   [9]  R0   ← start of HW frame
+        //   ...
+        //   [16] xPSR ← offset 16 from initial SP
+        let xpsr = unsafe { *(sp as *const u32).add(16) };
+        assert_eq!(xpsr, 0x0100_0000, "xPSR Thumb bit not set (got {xpsr:#010x})");
+    }
+
+    #[test]
+    fn stack_init_frame_exc_return() {
+        fn task_fn() -> ! { loop {} }
+        let mut stack = [0u32; 32];
+        let sp = HostContext::stack_init(&mut stack, task_fn);
+
+        // EXC_RETURN is the 9th word from the initial SP (index 8).
+        let exc_return = unsafe { *(sp as *const u32).add(8) };
+        assert_eq!(exc_return, 0xFFFF_FFFD, "EXC_RETURN value wrong (got {exc_return:#010x})");
+    }
+}

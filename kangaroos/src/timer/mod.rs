@@ -17,7 +17,7 @@ pub const TICKS_PER_SEC: u64 = 1000;
 // ---------------------------------------------------------------------------
 
 /// A span of time measured in SysTick ticks.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Duration(u64);
 
 impl Duration {
@@ -182,5 +182,136 @@ impl Timer {
         if let Some(p) = self.period {
             self.next = self.next.wrapping_add(p);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::{Duration, Instant, TICKS_PER_SEC};
+    use std::sync::Mutex;
+
+    // Serialize tests that manipulate the global TICK counter so that
+    // parallel test threads do not observe each other's writes.
+    static TICK_LOCK: Mutex<()> = Mutex::new(());
+
+    // --- Duration ---
+
+    #[test]
+    fn duration_zero() {
+        assert_eq!(Duration::ZERO.as_ticks(), 0);
+    }
+
+    #[test]
+    fn duration_from_ticks_round_trip() {
+        assert_eq!(Duration::from_ticks(42).as_ticks(), 42);
+    }
+
+    #[test]
+    fn duration_from_millis() {
+        // At TICKS_PER_SEC = 1000: 1 ms == 1 tick.
+        assert_eq!(Duration::from_millis(1).as_ticks(), 1);
+        assert_eq!(Duration::from_millis(1000).as_ticks(), TICKS_PER_SEC);
+    }
+
+    #[test]
+    fn duration_from_secs() {
+        assert_eq!(Duration::from_secs(1).as_ticks(), TICKS_PER_SEC);
+        assert_eq!(Duration::from_secs(5).as_ticks(), 5 * TICKS_PER_SEC);
+    }
+
+    #[test]
+    fn duration_as_millis() {
+        assert_eq!(Duration::from_ticks(500).as_millis(), 500);
+        assert_eq!(Duration::from_ticks(TICKS_PER_SEC).as_millis(), 1000);
+    }
+
+    #[test]
+    fn duration_as_secs() {
+        assert_eq!(Duration::from_secs(3).as_secs(), 3);
+        // Sub-second ticks round down to zero.
+        assert_eq!(Duration::from_ticks(TICKS_PER_SEC - 1).as_secs(), 0);
+    }
+
+    #[test]
+    fn duration_add() {
+        let a = Duration::from_ticks(10);
+        let b = Duration::from_ticks(5);
+        assert_eq!((a + b).as_ticks(), 15);
+    }
+
+    #[test]
+    fn duration_sub_normal() {
+        assert_eq!((Duration::from_ticks(10) - Duration::from_ticks(3)).as_ticks(), 7);
+    }
+
+    #[test]
+    fn duration_sub_saturates_at_zero() {
+        // Underflow must saturate, not panic or wrap.
+        assert_eq!((Duration::from_ticks(3) - Duration::from_ticks(10)).as_ticks(), 0);
+    }
+
+    #[test]
+    fn duration_add_assign() {
+        let mut d = Duration::from_ticks(10);
+        d += Duration::from_ticks(5);
+        assert_eq!(d.as_ticks(), 15);
+    }
+
+    #[test]
+    fn duration_ordering() {
+        assert!(Duration::from_ticks(5) < Duration::from_ticks(10));
+        assert!(Duration::from_ticks(10) > Duration::from_ticks(5));
+        assert_eq!(Duration::from_ticks(7), Duration::from_ticks(7));
+    }
+
+    // --- Instant ---
+
+    #[test]
+    fn instant_checked_duration_since() {
+        let _g = TICK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { crate::kernel::scheduler::TICK = 200; }
+        let t1 = Instant::now();
+        unsafe { crate::kernel::scheduler::TICK = 350; }
+        let t2 = Instant::now();
+
+        assert_eq!(t2.checked_duration_since(t1).unwrap().as_ticks(), 150);
+        // t1 is after t2 in logical time → None.
+        assert!(t1.checked_duration_since(t2).is_none());
+    }
+
+    #[test]
+    fn instant_saturating_duration_since() {
+        let _g = TICK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { crate::kernel::scheduler::TICK = 500; }
+        let t1 = Instant::now();
+        unsafe { crate::kernel::scheduler::TICK = 600; }
+        let t2 = Instant::now();
+
+        assert_eq!(t2.saturating_duration_since(t1).as_ticks(), 100);
+        // Going backwards saturates to zero.
+        assert_eq!(t1.saturating_duration_since(t2).as_ticks(), 0);
+    }
+
+    #[test]
+    fn instant_same_tick_elapsed_zero() {
+        let _g = TICK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { crate::kernel::scheduler::TICK = 999; }
+        let t = Instant::now();
+        // TICK is unchanged — elapsed duration must be zero.
+        assert_eq!(Instant::now().saturating_duration_since(t).as_ticks(), 0);
+    }
+
+    #[test]
+    fn instant_ordering() {
+        let _g = TICK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { crate::kernel::scheduler::TICK = 10; }
+        let early = Instant::now();
+        unsafe { crate::kernel::scheduler::TICK = 20; }
+        let late = Instant::now();
+        assert!(early < late);
     }
 }

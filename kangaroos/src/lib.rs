@@ -1,5 +1,11 @@
 #![no_std]
 
+// The test harness links libstd unconditionally. Bringing it into the
+// name-space here lets every `#[cfg(test)]` module in this crate use
+// `std::sync::Mutex` etc. without repeating the declaration.
+#[cfg(test)]
+extern crate std;
+
 pub mod arch;
 pub mod channel;
 pub(crate) mod port;
@@ -100,13 +106,12 @@ defmt::timestamp!("{=u32}", {
 });
 
 // Global state referenced by PendSV and SysTick handlers.
-// `TASKS_PTR` and `MAX_TASKS` are set once by `kernel::start` before
-// interrupts fire; `TASK_COUNT` and `CURRENT_TASK` are updated by PendSV.
+// `TASKS_PTR` is set once by `kernel::start` before interrupts fire;
+// `TASK_COUNT` and `CURRENT_TASK` are updated by PendSV.
 //
 // Safety: single-core; accessed from Handler mode (PendSV/SysTick) or
 // with interrupts disabled (task::spawn / task::yield_now).
 pub(crate) static mut TASKS_PTR: *mut Tcb = core::ptr::null_mut();
-pub(crate) static mut MAX_TASKS: usize = 0;
 pub(crate) static mut TASK_COUNT: usize = 0;
 pub(crate) static mut CURRENT_TASK: usize = 0;
 

@@ -1,5 +1,5 @@
 /// Current execution state of a task.
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum TaskState {
     /// Slot not yet initialised (default for the `TASKS` array).
     Uninit,
@@ -69,5 +69,59 @@ impl Tcb {
             wait_next: 0xFF,
             wait_ptr: 0,
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::{Tcb, TaskState};
+    use core::mem;
+
+    #[test]
+    fn tcb_zeroed_state_is_uninit() {
+        let t = Tcb::zeroed();
+        assert!(matches!(t.state, TaskState::Uninit));
+    }
+
+    #[test]
+    fn tcb_zeroed_sentinel_fields() {
+        let t = Tcb::zeroed();
+        assert_eq!(t.sp, 0);
+        assert_eq!(t.priority, 0);
+        assert_eq!(t.base_priority, 0);
+        assert_eq!(t.time_slice, 0);
+        assert_eq!(t.slice_remaining, 0);
+        assert_eq!(t.stack_base, 0);
+        assert_eq!(t.name, "");
+        // 0xFF is the intrusive-list empty sentinel.
+        assert_eq!(t.wait_next, 0xFF);
+        assert_eq!(t.wait_ptr, 0);
+    }
+
+    #[test]
+    fn task_state_equality() {
+        assert_eq!(TaskState::Ready, TaskState::Ready);
+        assert_eq!(TaskState::Running, TaskState::Running);
+        assert_ne!(TaskState::Ready, TaskState::Blocked);
+        assert_eq!(TaskState::Sleeping(100), TaskState::Sleeping(100));
+        assert_ne!(TaskState::Sleeping(100), TaskState::Sleeping(200));
+        assert_ne!(TaskState::Dead, TaskState::Uninit);
+    }
+
+    #[test]
+    fn tcb_size_regression() {
+        // On 32-bit ARM the TCB must fit within 64 bytes.
+        // On a 64-bit host each pointer doubles in size (especially the fat
+        // pointer `name: &'static str`), so scale the limit accordingly.
+        let max = if mem::size_of::<usize>() == 4 { 64 } else { 96 };
+        assert!(
+            mem::size_of::<Tcb>() <= max,
+            "Tcb is {} bytes — check for unintended field additions (limit {max})",
+            mem::size_of::<Tcb>(),
+        );
     }
 }

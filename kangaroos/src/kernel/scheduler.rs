@@ -293,3 +293,127 @@ unsafe extern "C" fn pendsv_save_and_switch(current_sp: usize) -> usize {
         crate::ktask(next).sp
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+#[allow(unused_assignments)]
+mod tests {
+    use super::{find_next, tick, TICK};
+    use crate::kernel::tcb::{Tcb, TaskState};
+    use std::sync::Mutex;
+
+    // All scheduler tests share global mutable state (TASKS_PTR, TASK_COUNT,
+    // CURRENT_TASK, TICK).  Serialize them with a single lock so parallel
+    // test threads do not corrupt each other's task arrays.
+    static SCHED_LOCK: Mutex<()> = Mutex::new(());
+
+    // Set up a stack-allocated task array and register it with the kernel
+    // globals.  Returns a guard that resets the globals on drop.
+    macro_rules! with_tasks {
+        ($tasks:ident, $count:expr, $current:expr) => {
+            let mut $tasks = [Tcb::zeroed(); $count];
+            let _guard = {
+                unsafe {
+                    crate::TASKS_PTR = $tasks.as_mut_ptr();
+                    crate::TASK_COUNT = $count;
+                    crate::CURRENT_TASK = $current;
+                }
+                // Return a guard that clears the pointer when dropped.
+                struct Guard;
+                impl Drop for Guard {
+                    fn drop(&mut self) {
+                        unsafe {
+                            crate::TASKS_PTR = core::ptr::null_mut();
+                            crate::TASK_COUNT = 0;
+                        }
+                    }
+                }
+                Guard
+            };
+        };
+    }
+
+    #[test]
+    fn find_next_picks_highest_priority_ready() {
+        let _lock = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        with_tasks!(tasks, 3, 0);
+        tasks[0].state = TaskState::Running;  tasks[0].priority = 5;
+        tasks[1].state = TaskState::Ready;    tasks[1].priority = 3; // wins
+        tasks[2].state = TaskState::Blocked;  tasks[2].priority = 1; // blocked
+        assert_eq!(find_next(), 1);
+    }
+
+    #[test]
+    fn find_next_round_robin_equal_priority() {
+        let _lock = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        with_tasks!(tasks, 3, 0);
+        tasks[0].state = TaskState::Running; tasks[0].priority = 5;
+        tasks[1].state = TaskState::Ready;   tasks[1].priority = 5;
+        tasks[2].state = TaskState::Ready;   tasks[2].priority = 5;
+        // Search starts at current+1 = 1, so task 1 is the round-robin winner.
+        assert_eq!(find_next(), 1);
+    }
+
+    #[test]
+    fn find_next_skips_non_ready() {
+        let _lock = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        with_tasks!(tasks, 3, 0);
+        tasks[0].state = TaskState::Running; tasks[0].priority = 5;
+        tasks[1].state = TaskState::Blocked; tasks[1].priority = 0; // highest prio but blocked
+        tasks[2].state = TaskState::Ready;   tasks[2].priority = 5;
+        // Only task 2 is ready → it must be selected despite lower prio than task 1.
+        assert_eq!(find_next(), 2);
+    }
+
+    #[test]
+    fn tick_wakes_sleeping_task_and_requests_preempt() {
+        let _lock = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        with_tasks!(tasks, 2, 0);
+        tasks[0].state = TaskState::Running;     tasks[0].priority = 5;
+        tasks[0].time_slice = 10;                tasks[0].slice_remaining = 10;
+        tasks[1].state = TaskState::Sleeping(5); tasks[1].priority = 3; // higher prio
+        unsafe { TICK = 4; } // will become 5 after tick() increments
+        let preempt = tick(); // TICK → 5 → wakes task 1 → preempt needed
+        assert!(preempt, "expected preemption when a higher-prio task is woken");
+        assert!(matches!(tasks[1].state, TaskState::Ready));
+    }
+
+    #[test]
+    fn tick_does_not_preempt_when_lower_prio_sleeper_wakes() {
+        let _lock = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        with_tasks!(tasks, 2, 0);
+        tasks[0].state = TaskState::Running;     tasks[0].priority = 2; // higher prio
+        tasks[0].time_slice = 10;                tasks[0].slice_remaining = 10;
+        tasks[1].state = TaskState::Sleeping(5); tasks[1].priority = 5; // lower prio
+        unsafe { TICK = 4; }
+        let preempt = tick();
+        assert!(!preempt, "lower-prio wakeup must not trigger preemption");
+        assert!(matches!(tasks[1].state, TaskState::Ready));
+    }
+
+    #[test]
+    fn tick_slice_expiry_rotates_equal_prio() {
+        let _lock = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        with_tasks!(tasks, 2, 0);
+        tasks[0].state = TaskState::Running; tasks[0].priority = 5;
+        tasks[0].time_slice = 1;             tasks[0].slice_remaining = 1;
+        tasks[1].state = TaskState::Ready;   tasks[1].priority = 5; // same prio peer
+        unsafe { TICK = 0; }
+        let preempt = tick(); // slice expires → rotate
+        assert!(preempt);
+    }
+
+    #[test]
+    fn tick_increments_global_counter() {
+        let _lock = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        with_tasks!(tasks, 1, 0);
+        tasks[0].state = TaskState::Running; tasks[0].priority = 5;
+        tasks[0].time_slice = 100;           tasks[0].slice_remaining = 100;
+        unsafe { TICK = 999; }
+        tick();
+        assert_eq!(unsafe { TICK }, 1000);
+    }
+}
