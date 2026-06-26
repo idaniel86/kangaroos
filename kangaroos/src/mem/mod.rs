@@ -254,3 +254,115 @@ impl<T, const N: usize> Drop for PoolBox<'_, T, N> {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::Pool;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn pool_new_all_available() {
+        let pool: Pool<u32, 4> = Pool::new();
+        assert_eq!(pool.available(), 4);
+    }
+
+    #[test]
+    fn pool_zero_capacity() {
+        let pool: Pool<u32, 0> = Pool::new();
+        assert_eq!(pool.available(), 0);
+        assert!(pool.alloc(1).is_none());
+    }
+
+    #[test]
+    fn pool_alloc_decrements_and_drop_restores() {
+        let pool: Pool<u32, 3> = Pool::new();
+        let b1 = pool.alloc(10).unwrap();
+        assert_eq!(pool.available(), 2);
+        let b2 = pool.alloc(20).unwrap();
+        assert_eq!(pool.available(), 1);
+        let b3 = pool.alloc(30).unwrap();
+        assert_eq!(pool.available(), 0);
+
+        drop(b1);
+        assert_eq!(pool.available(), 1);
+        drop(b2);
+        drop(b3);
+        assert_eq!(pool.available(), 3);
+    }
+
+    #[test]
+    fn pool_exhausted_returns_none() {
+        let pool: Pool<u32, 2> = Pool::new();
+        let _b1 = pool.alloc(1).unwrap();
+        let _b2 = pool.alloc(2).unwrap();
+        assert!(pool.alloc(3).is_none());
+        // After dropping _b2 a new alloc should succeed.
+        drop(_b2);
+        assert!(pool.alloc(99).is_some());
+    }
+
+    #[test]
+    fn pool_box_deref() {
+        let pool: Pool<u32, 1> = Pool::new();
+        let b = pool.alloc(42).unwrap();
+        assert_eq!(*b, 42);
+    }
+
+    #[test]
+    fn pool_box_deref_mut() {
+        let pool: Pool<u32, 1> = Pool::new();
+        let mut b = pool.alloc(10).unwrap();
+        *b = 99;
+        assert_eq!(*b, 99);
+    }
+
+    #[test]
+    fn pool_drop_calls_t_drop() {
+        static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+        struct Tracked;
+        impl Drop for Tracked {
+            fn drop(&mut self) {
+                DROP_COUNT.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        // Ensure counter is reset for this test (tests may run in any order).
+        DROP_COUNT.store(0, Ordering::Relaxed);
+
+        let pool: Pool<Tracked, 2> = Pool::new();
+        let b1 = pool.alloc(Tracked).unwrap();
+        let b2 = pool.alloc(Tracked).unwrap();
+        assert_eq!(DROP_COUNT.load(Ordering::Relaxed), 0);
+
+        drop(b1);
+        assert_eq!(DROP_COUNT.load(Ordering::Relaxed), 1);
+        drop(b2);
+        assert_eq!(DROP_COUNT.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn pool_alloc_rejected_val_is_dropped() {
+        // When a pool is exhausted, the value passed to alloc() must be dropped.
+        static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+        struct Tracked;
+        impl Drop for Tracked {
+            fn drop(&mut self) {
+                DROP_COUNT.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        DROP_COUNT.store(0, Ordering::Relaxed);
+
+        let pool: Pool<Tracked, 1> = Pool::new();
+        let _b = pool.alloc(Tracked).unwrap();  // succeeds, now full
+        let rejected = pool.alloc(Tracked);     // fails → value must be dropped
+        assert!(rejected.is_none());
+        assert_eq!(DROP_COUNT.load(Ordering::Relaxed), 1, "rejected value not dropped");
+    }
+}

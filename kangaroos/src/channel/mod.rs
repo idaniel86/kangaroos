@@ -362,3 +362,98 @@ impl<'a, T> Receiver<'a, T> {
         self.inner.try_recv_now()
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::Channel;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn channel_try_recv_empty_returns_none() {
+        let ch: Channel<u32, 4> = Channel::new();
+        assert_eq!(ch.receiver().try_recv(), None);
+    }
+
+    #[test]
+    fn channel_try_send_full_returns_false() {
+        let ch: Channel<u32, 2> = Channel::new();
+        let tx = ch.sender();
+        assert!(tx.try_send(1));
+        assert!(tx.try_send(2));
+        assert!(!tx.try_send(3)); // full
+    }
+
+    #[test]
+    fn channel_fifo_order() {
+        let ch: Channel<u32, 4> = Channel::new();
+        let tx = ch.sender();
+        let rx = ch.receiver();
+
+        assert!(tx.try_send(10));
+        assert!(tx.try_send(20));
+        assert!(tx.try_send(30));
+
+        assert_eq!(rx.try_recv(), Some(10));
+        assert_eq!(rx.try_recv(), Some(20));
+        assert_eq!(rx.try_recv(), Some(30));
+        assert_eq!(rx.try_recv(), None);
+    }
+
+    #[test]
+    fn channel_ring_wrap_around() {
+        // Fill 2-slot channel, drain one, fill again — tests head/tail wrap.
+        let ch: Channel<u32, 2> = Channel::new();
+        let tx = ch.sender();
+        let rx = ch.receiver();
+
+        assert!(tx.try_send(1));
+        assert!(tx.try_send(2));
+        assert_eq!(rx.try_recv(), Some(1)); // head advances to slot 1
+        assert!(tx.try_send(3));            // tail wraps back to slot 0
+        assert_eq!(rx.try_recv(), Some(2));
+        assert_eq!(rx.try_recv(), Some(3));
+        assert_eq!(rx.try_recv(), None);
+    }
+
+    #[test]
+    fn channel_rejected_send_drops_value() {
+        // When try_send fails (full), the value must be dropped immediately.
+        static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+        struct Tracked;
+        impl Drop for Tracked {
+            fn drop(&mut self) {
+                DROP_COUNT.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        DROP_COUNT.store(0, Ordering::Relaxed);
+
+        let ch: Channel<Tracked, 1> = Channel::new();
+        let tx = ch.sender();
+        let rx = ch.receiver();
+
+        assert!(tx.try_send(Tracked));  // buffered
+        assert!(!tx.try_send(Tracked)); // full → rejected and dropped
+        assert_eq!(DROP_COUNT.load(Ordering::Relaxed), 1, "rejected value not dropped");
+
+        drop(rx.try_recv()); // consume buffered item
+        assert_eq!(DROP_COUNT.load(Ordering::Relaxed), 2, "buffered value not dropped on recv+drop");
+    }
+
+    #[test]
+    fn channel_sender_receiver_are_copy() {
+        let ch: Channel<u32, 4> = Channel::new();
+        let tx = ch.sender();
+        let tx2 = tx; // Copy
+        let rx = ch.receiver();
+        let rx2 = rx; // Copy
+
+        assert!(tx2.try_send(42));
+        assert_eq!(rx2.try_recv(), Some(42));
+    }
+}

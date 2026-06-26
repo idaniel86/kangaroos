@@ -312,3 +312,66 @@ impl EventGroup {
         })
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::EventGroup;
+
+    #[test]
+    fn event_group_initial_zero() {
+        let eg = EventGroup::new();
+        assert_eq!(eg.get(), 0);
+    }
+
+    #[test]
+    fn event_group_set_accumulates_bits() {
+        let eg = EventGroup::new();
+        // With empty wait lists set() just ORs the bits in and returns the new value.
+        let bits = eg.set(0b0001);
+        assert_eq!(bits, 0b0001);
+        let bits = eg.set(0b0010);
+        assert_eq!(bits, 0b0011);
+        assert_eq!(eg.get(), 0b0011);
+    }
+
+    #[test]
+    fn event_group_clear_masks_bits() {
+        let eg = EventGroup::new();
+        eg.set(0b1111);
+        eg.clear(0b0101);
+        assert_eq!(eg.get(), 0b1010);
+    }
+
+    #[test]
+    fn event_group_set_returns_post_clear_state() {
+        // With no waiters the returned value == the new bit state.
+        let eg = EventGroup::new();
+        eg.set(0xFF);
+        let after = eg.set(0x00); // no new bits — old bits remain
+        assert_eq!(after, 0xFF);
+    }
+
+    #[test]
+    fn event_group_clear_all() {
+        let eg = EventGroup::new();
+        eg.set(0xFFFF_FFFF);
+        eg.clear(0xFFFF_FFFF);
+        assert_eq!(eg.get(), 0);
+    }
+
+    #[test]
+    fn event_group_independent_bits() {
+        // Setting one bit must not disturb others.
+        let eg = EventGroup::new();
+        eg.set(1 << 0);
+        eg.set(1 << 15);
+        eg.set(1 << 31);
+        assert_eq!(eg.get(), (1 << 0) | (1 << 15) | (1 << 31));
+        eg.clear(1 << 15);
+        assert_eq!(eg.get(), (1 << 0) | (1 << 31));
+    }
+}

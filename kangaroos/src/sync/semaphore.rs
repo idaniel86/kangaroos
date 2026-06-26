@@ -150,3 +150,63 @@ impl Semaphore {
         crate::port::interrupt_free(|| unsafe { (*self.inner.get()).count })
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::Semaphore;
+
+    #[test]
+    fn semaphore_initial_count() {
+        let sem = Semaphore::new(3, 5);
+        assert_eq!(sem.count(), 3);
+    }
+
+    #[test]
+    fn semaphore_try_take_decrements() {
+        let sem = Semaphore::new(3, 5);
+        assert!(sem.try_take());
+        assert_eq!(sem.count(), 2);
+        assert!(sem.try_take());
+        assert!(sem.try_take());
+        assert_eq!(sem.count(), 0);
+        // Empty — must return false without blocking.
+        assert!(!sem.try_take());
+        assert_eq!(sem.count(), 0);
+    }
+
+    #[test]
+    fn semaphore_give_increments() {
+        let sem = Semaphore::new(0, 3);
+        sem.give(); assert_eq!(sem.count(), 1);
+        sem.give(); assert_eq!(sem.count(), 2);
+        sem.give(); assert_eq!(sem.count(), 3);
+        // At ceiling — token must be silently dropped.
+        sem.give(); assert_eq!(sem.count(), 3);
+    }
+
+    #[test]
+    fn semaphore_binary() {
+        let sem = Semaphore::new(0, 1);
+        assert!(!sem.try_take());
+        sem.give();
+        assert_eq!(sem.count(), 1);
+        assert!(sem.try_take());
+        assert_eq!(sem.count(), 0);
+        assert!(!sem.try_take());
+    }
+
+    #[test]
+    fn semaphore_give_then_take_roundtrip() {
+        let sem = Semaphore::new(2, 4);
+        assert!(sem.try_take());   // 2 → 1
+        assert!(sem.try_take());   // 1 → 0
+        sem.give();                // 0 → 1
+        assert_eq!(sem.count(), 1);
+        assert!(sem.try_take());   // 1 → 0
+        assert!(!sem.try_take());  // still 0
+    }
+}

@@ -136,3 +136,60 @@ impl Once {
         })
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::Once;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn once_runs_closure_exactly_once() {
+        static COUNT: AtomicUsize = AtomicUsize::new(0);
+        COUNT.store(0, Ordering::Relaxed);
+
+        let once = Once::new();
+        once.call_once(|| { COUNT.fetch_add(1, Ordering::Relaxed); });
+        once.call_once(|| { COUNT.fetch_add(1, Ordering::Relaxed); });
+        once.call_once(|| { COUNT.fetch_add(1, Ordering::Relaxed); });
+
+        assert_eq!(COUNT.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn once_second_call_is_noop() {
+        let once = Once::new();
+        let mut ran = false;
+        once.call_once(|| { ran = true; });
+        assert!(ran);
+
+        ran = false;
+        once.call_once(|| { ran = true; }); // state is Done — must not run
+        assert!(!ran);
+    }
+
+    #[test]
+    fn once_is_completed_reflects_state() {
+        let once = Once::new();
+        assert!(!once.is_completed());
+        once.call_once(|| {});
+        assert!(once.is_completed());
+    }
+
+    #[test]
+    fn once_closure_side_effect_is_visible() {
+        static FLAG: AtomicUsize = AtomicUsize::new(0);
+        FLAG.store(0, Ordering::Relaxed);
+
+        let once = Once::new();
+        once.call_once(|| FLAG.store(42, Ordering::Relaxed));
+        assert_eq!(FLAG.load(Ordering::Relaxed), 42);
+
+        // Subsequent calls must not alter FLAG.
+        once.call_once(|| FLAG.store(99, Ordering::Relaxed));
+        assert_eq!(FLAG.load(Ordering::Relaxed), 42);
+    }
+}
