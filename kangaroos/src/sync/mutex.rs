@@ -3,13 +3,14 @@ use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 
 use crate::kernel::scheduler;
+use crate::kernel::tcb::Tcb;
 
 struct MutexInner<T> {
     data: T,
-    /// Task index of the current owner, `0xFF` = unlocked.
-    owner: u8,
-    /// Head of the intrusive wait list, `0xFF` = empty.
-    wait_head: u8,
+    /// Pointer to the current owner's TCB, `null` = unlocked.
+    owner: *mut Tcb,
+    /// Head of the intrusive wait list, `null` = empty.
+    wait_head: *mut Tcb,
 }
 
 /// A mutual-exclusion lock with **priority inheritance** (PI).
@@ -46,8 +47,8 @@ impl<T> Mutex<T> {
         Mutex {
             inner: UnsafeCell::new(MutexInner {
                 data,
-                owner: 0xFF,
-                wait_head: 0xFF,
+                owner: core::ptr::null_mut(),
+                wait_head: core::ptr::null_mut(),
             }),
             name: None,
         }
@@ -59,8 +60,8 @@ impl<T> Mutex<T> {
         Mutex {
             inner: UnsafeCell::new(MutexInner {
                 data,
-                owner: 0xFF,
-                wait_head: 0xFF,
+                owner: core::ptr::null_mut(),
+                wait_head: core::ptr::null_mut(),
             }),
             name: Some(name),
         }
@@ -77,45 +78,36 @@ impl<T> Mutex<T> {
 
         crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
-            if inner.owner == 0xFF {
+            if inner.owner.is_null() {
                 // Unlocked: claim it immediately.
-                debug_assert!(
-                    crate::CURRENT_TASK <= 254,
-                    "CURRENT_TASK exceeds u8 sentinel limit"
-                );
-                inner.owner = crate::CURRENT_TASK as u8;
+                inner.owner = crate::CURRENT;
                 #[cfg(feature = "defmt")]
-                defmt::debug!(
-                    "mutex {}: acquired by '{}'",
-                    id,
-                    crate::ktask(crate::CURRENT_TASK).name
-                );
+                defmt::debug!("mutex {}: acquired by '{}'", id, (*crate::CURRENT).name);
             } else {
                 // Locked: apply priority inheritance then sleep.
-                let cur_idx = crate::CURRENT_TASK;
-                let owner_idx = inner.owner as usize;
-                let cur_prio = crate::ktask(cur_idx).priority;
-                let owner_prio = crate::ktask(owner_idx).priority;
+                let owner = inner.owner;
+                let cur_prio = (*crate::CURRENT).priority;
+                let owner_prio = (*owner).priority;
                 if cur_prio < owner_prio {
                     // Boost owner to the waiter's (higher) priority.
                     #[cfg(feature = "defmt")]
                     defmt::debug!(
                         "mutex {}: PI boost '{}' prio {=u8} -> {=u8}",
                         id,
-                        crate::ktask(owner_idx).name,
+                        (*owner).name,
                         owner_prio,
                         cur_prio
                     );
-                    crate::ktask(owner_idx).priority = cur_prio;
+                    (*owner).priority = cur_prio;
                 }
                 #[cfg(feature = "defmt")]
                 defmt::debug!(
                     "mutex {}: contended, '{}' blocking, owner='{}'",
                     id,
-                    crate::ktask(cur_idx).name,
-                    crate::ktask(owner_idx).name
+                    (*crate::CURRENT).name,
+                    (*owner).name
                 );
-                scheduler::wait_list_push(&mut inner.wait_head, cur_idx);
+                scheduler::wait_list_push(&mut inner.wait_head, crate::CURRENT);
                 scheduler::block_current();
                 must_block = true;
             }
@@ -153,12 +145,8 @@ impl<T> Mutex<T> {
     pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
         let acquired = crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
-            if inner.owner == 0xFF {
-                debug_assert!(
-                    crate::CURRENT_TASK <= 254,
-                    "CURRENT_TASK exceeds u8 sentinel limit"
-                );
-                inner.owner = crate::CURRENT_TASK as u8;
+            if inner.owner.is_null() {
+                inner.owner = crate::CURRENT;
                 true
             } else {
                 false
@@ -187,35 +175,27 @@ impl<T> Mutex<T> {
 
         crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
-            let old_owner = inner.owner as usize;
+            let old_owner = inner.owner;
 
             // Restore the holder's effective priority to its static base.
-            crate::ktask(old_owner).priority = crate::ktask(old_owner).base_priority;
+            (*old_owner).priority = (*old_owner).base_priority;
 
-            if inner.wait_head != 0xFF {
+            if !inner.wait_head.is_null() {
                 // Transfer ownership directly to the highest-priority waiter.
                 let next_owner = scheduler::wait_list_pop_highest(&mut inner.wait_head);
-                debug_assert!(
-                    next_owner <= 254,
-                    "next_owner {next_owner} exceeds u8 sentinel limit"
-                );
-                inner.owner = next_owner as u8;
+                inner.owner = next_owner;
                 need_preempt = scheduler::unblock(next_owner);
                 #[cfg(feature = "defmt")]
                 defmt::debug!(
                     "mutex {}: released by '{}', granted to '{}'",
                     id,
-                    crate::ktask(old_owner).name,
-                    crate::ktask(next_owner).name
+                    (*old_owner).name,
+                    (*next_owner).name
                 );
             } else {
-                inner.owner = 0xFF;
+                inner.owner = core::ptr::null_mut();
                 #[cfg(feature = "defmt")]
-                defmt::debug!(
-                    "mutex {}: released by '{}'",
-                    id,
-                    crate::ktask(old_owner).name
-                );
+                defmt::debug!("mutex {}: released by '{}'", id, (*old_owner).name);
             }
         });
 

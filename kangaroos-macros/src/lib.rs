@@ -1,8 +1,7 @@
 use proc_macro::TokenStream;
-use proc_macro2::Literal;
 use quote::quote;
 use syn::{
-    Expr, FnArg, Ident, ItemFn, LitInt, LitStr, Token,
+    Expr, FnArg, Ident, ItemFn, LitStr, Token,
     parse::{Parse, ParseStream},
     parse_macro_input,
 };
@@ -58,21 +57,18 @@ impl Parse for TaskArgs {
 
 struct MainArgs {
     cpu_hz: Expr,
-    max_tasks: usize,
 }
 
 /// Parses: `cpu_hz = 8_000_000, max_tasks = 4`
 impl Parse for MainArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut cpu_hz: Option<Expr> = None;
-        let mut max_tasks: Option<usize> = None;
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
             input.parse::<Token![=]>()?;
             match key.to_string().as_str() {
                 "cpu_hz" => cpu_hz = Some(input.parse()?),
-                "max_tasks" => max_tasks = Some(input.parse::<LitInt>()?.base10_parse()?),
                 other => {
                     return Err(syn::Error::new(
                         key.span(),
@@ -88,9 +84,6 @@ impl Parse for MainArgs {
         Ok(MainArgs {
             cpu_hz: cpu_hz.ok_or_else(|| {
                 syn::Error::new(proc_macro2::Span::call_site(), "`cpu_hz` is required")
-            })?,
-            max_tasks: max_tasks.ok_or_else(|| {
-                syn::Error::new(proc_macro2::Span::call_site(), "`max_tasks` is required")
             })?,
         })
     }
@@ -132,7 +125,7 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
     let fn_name_str = fn_ident.to_string();
     let upper = fn_name_str.to_uppercase();
 
-    let stack_ident = Ident::new(&format!("__STACK_{upper}"), fn_ident.span());
+    let storage_ident = Ident::new(&format!("__STORAGE_{upper}"), fn_ident.span());
     let impl_ident = Ident::new(&format!("__impl_{fn_name_str}"), fn_ident.span());
     let name_str = args
         .name
@@ -169,12 +162,17 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {
             #impl_func
 
-            static mut #stack_ident: [u32; #stack_words] = [0u32; #stack_words];
+            static mut #storage_ident: ::kangaroos::TaskStorage<{#stack_words}> =
+                ::kangaroos::TaskStorage::new();
 
             fn #fn_ident() -> ::kangaroos::SpawnToken {
+                let __s = unsafe { &mut *::core::ptr::addr_of_mut!(#storage_ident) };
+                let __tcb = __s.tcb_ptr();
+                let __stack = __s.stack_slice();
                 ::kangaroos::SpawnToken::new(
-                    unsafe { ::core::ptr::addr_of_mut!(#stack_ident) as *mut u32 },
-                    #stack_words,
+                    __tcb,
+                    __stack.as_mut_ptr(),
+                    __stack.len(),
                     #priority as u8,
                     #time_slice as u8,
                     #impl_ident,
@@ -208,7 +206,8 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                 #impl_ident(#(#param_pats,)*)
             }
 
-            static mut #stack_ident: [u32; #stack_words] = [0u32; #stack_words];
+            static mut #storage_ident: ::kangaroos::TaskStorage<{#stack_words}> =
+                ::kangaroos::TaskStorage::new();
 
             fn #fn_ident(#(#param_fields,)*) -> ::kangaroos::SpawnToken {
                 // Write params to static storage before handing the token to spawn.
@@ -216,9 +215,13 @@ pub fn task(attr: TokenStream, item: TokenStream) -> TokenStream {
                     ::core::ptr::addr_of_mut!(#params_ident)
                         .write(::core::mem::MaybeUninit::new((#(#param_pats,)*)));
                 }
+                let __s = unsafe { &mut *::core::ptr::addr_of_mut!(#storage_ident) };
+                let __tcb = __s.tcb_ptr();
+                let __stack = __s.stack_slice();
                 ::kangaroos::SpawnToken::new(
-                    unsafe { ::core::ptr::addr_of_mut!(#stack_ident) as *mut u32 },
-                    #stack_words,
+                    __tcb,
+                    __stack.as_mut_ptr(),
+                    __stack.len(),
                     #priority as u8,
                     #time_slice as u8,
                     #entry_ident,
@@ -255,8 +258,6 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as MainArgs);
     let func = parse_macro_input!(item as ItemFn);
 
-    // N = user tasks + 1 idle slot.
-    let n_lit = Literal::usize_unsuffixed(args.max_tasks + 1);
     let cpu_hz = &args.cpu_hz;
 
     // Extract the spawner parameter name and type from the function signature.
@@ -288,14 +289,11 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
     let user_stmts = &func.block.stmts;
 
     quote! {
-        static mut __KERNEL: ::kangaroos::Kernel<#n_lit> = ::kangaroos::Kernel::new();
-
         #[::cortex_m_rt::entry]
         fn main() -> ! {
-            let __k = unsafe { &mut *::core::ptr::addr_of_mut!(__KERNEL) };
-            let mut #spawner_pat: #spawner_ty = ::kangaroos::Spawner::new(__k);
+            let mut #spawner_pat: #spawner_ty = ::kangaroos::Spawner;
             #(#user_stmts)*
-            __k.start(#cpu_hz)
+            ::kangaroos::start(#cpu_hz)
         }
     }
     .into()

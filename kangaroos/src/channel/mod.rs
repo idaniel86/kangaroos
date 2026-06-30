@@ -2,6 +2,7 @@ use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
 
 use crate::kernel::scheduler;
+use crate::kernel::tcb::Tcb;
 
 // ---------------------------------------------------------------------------
 // Private type-erasure traits
@@ -30,12 +31,12 @@ struct ChannelInner<T, const N: usize> {
     head: usize,
     tail: usize,
     count: usize,
-    /// Head of the blocked-senders intrusive wait list (`0xFF` = empty).
-    /// Invariant: `send_head != 0xFF` ⟹ `count == N` (buffer full).
-    send_head: u8,
-    /// Head of the blocked-receivers intrusive wait list (`0xFF` = empty).
-    /// Invariant: `recv_head != 0xFF` ⟹ `count == 0` (buffer empty).
-    recv_head: u8,
+    /// Head of the blocked-senders intrusive wait list (`null` = empty).
+    /// Invariant: `!send_head.is_null()` ⟹ `count == N` (buffer full).
+    send_head: *mut Tcb,
+    /// Head of the blocked-receivers intrusive wait list (`null` = empty).
+    /// Invariant: `!recv_head.is_null()` ⟹ `count == 0` (buffer empty).
+    recv_head: *mut Tcb,
 }
 
 /// A statically-allocated MPMC bounded channel.
@@ -66,22 +67,14 @@ impl<T: Send, const N: usize> Default for Channel<T, N> {
 
 impl<T: Send, const N: usize> Channel<T, N> {
     /// Create an empty channel.  `const fn` so it can initialise a `static`.
-    ///
-    /// # Panics (compile time)
-    /// Panics if `N > 254`. The blocked-sender/receiver wait-lists use `u8`
-    /// indices with `0xFF` (255) as the empty-list sentinel.
     pub const fn new() -> Self {
-        assert!(
-            N <= 254,
-            "Channel<T, N>: N must be \u{2264} 254 (0xFF is the wait-list sentinel)"
-        );
         Channel(UnsafeCell::new(ChannelInner {
             buf: [const { MaybeUninit::uninit() }; N],
             head: 0,
             tail: 0,
             count: 0,
-            send_head: 0xFF,
-            recv_head: 0xFF,
+            send_head: core::ptr::null_mut(),
+            recv_head: core::ptr::null_mut(),
         }))
     }
 
@@ -115,13 +108,13 @@ impl<T: Send, const N: usize> Channel<T, N> {
         crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.0.get();
 
-            if inner.recv_head != 0xFF {
+            if !inner.recv_head.is_null() {
                 // Direct handoff to the highest-priority blocked receiver.
                 // The receiver parked a pointer to its stack slot in wait_ptr.
-                let recv_idx = scheduler::wait_list_pop_highest(&mut inner.recv_head);
-                let dst = crate::ktask(recv_idx).wait_ptr as *mut T;
+                let recv = scheduler::wait_list_pop_highest(&mut inner.recv_head);
+                let dst = (*recv).wait_ptr as *mut T;
                 core::ptr::copy_nonoverlapping(src.as_ptr(), dst, 1);
-                if scheduler::unblock(recv_idx) {
+                if scheduler::unblock(recv) {
                     need_preempt = true;
                 }
             } else if inner.count < N {
@@ -135,8 +128,8 @@ impl<T: Send, const N: usize> Channel<T, N> {
                 // recv() can copy the value out when space opens up.
                 // SAFETY: `src` lives for the lifetime of send_impl; the task
                 // is blocked (stack frozen) until the receiver copies it out.
-                crate::ktask(crate::CURRENT_TASK).wait_ptr = src.as_ptr() as usize;
-                scheduler::wait_list_push(&mut inner.send_head, crate::CURRENT_TASK);
+                (*crate::CURRENT).wait_ptr = src.as_ptr() as usize;
+                scheduler::wait_list_push(&mut inner.send_head, crate::CURRENT);
                 scheduler::block_current();
                 must_block = true;
             }
@@ -160,11 +153,11 @@ impl<T: Send, const N: usize> Channel<T, N> {
         crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.0.get();
 
-            if inner.recv_head != 0xFF {
-                let recv_idx = scheduler::wait_list_pop_highest(&mut inner.recv_head);
-                let dst = crate::ktask(recv_idx).wait_ptr as *mut T;
+            if !inner.recv_head.is_null() {
+                let recv = scheduler::wait_list_pop_highest(&mut inner.recv_head);
+                let dst = (*recv).wait_ptr as *mut T;
                 core::ptr::copy_nonoverlapping(src.as_ptr(), dst, 1);
-                if scheduler::unblock(recv_idx) {
+                if scheduler::unblock(recv) {
                     need_preempt = true;
                 }
                 sent = true;
@@ -213,13 +206,13 @@ impl<T: Send, const N: usize> Channel<T, N> {
                 inner.count -= 1;
 
                 // The freed slot may now admit one blocked sender.
-                if inner.send_head != 0xFF {
-                    let sender_idx = scheduler::wait_list_pop_highest(&mut inner.send_head);
-                    let src = crate::ktask(sender_idx).wait_ptr as *const T;
+                if !inner.send_head.is_null() {
+                    let sender = scheduler::wait_list_pop_highest(&mut inner.send_head);
+                    let src = (*sender).wait_ptr as *const T;
                     core::ptr::copy_nonoverlapping(src, inner.buf[inner.tail].as_mut_ptr(), 1);
                     inner.tail = (inner.tail + 1) % N;
                     inner.count += 1;
-                    if scheduler::unblock(sender_idx) {
+                    if scheduler::unblock(sender) {
                         need_preempt = true;
                     }
                 }
@@ -231,8 +224,8 @@ impl<T: Send, const N: usize> Channel<T, N> {
                 // directly into it (direct handoff path in send_impl).
                 // SAFETY: `slot` lives for the lifetime of recv_impl; the task
                 // is blocked (stack frozen) until the sender fills it.
-                crate::ktask(crate::CURRENT_TASK).wait_ptr = slot.as_mut_ptr() as usize;
-                scheduler::wait_list_push(&mut inner.recv_head, crate::CURRENT_TASK);
+                (*crate::CURRENT).wait_ptr = slot.as_mut_ptr() as usize;
+                scheduler::wait_list_push(&mut inner.recv_head, crate::CURRENT);
                 scheduler::block_current();
                 must_block = true;
             }
@@ -269,13 +262,13 @@ impl<T: Send, const N: usize> Channel<T, N> {
                 inner.head = (inner.head + 1) % N;
                 inner.count -= 1;
 
-                if inner.send_head != 0xFF {
-                    let sender_idx = scheduler::wait_list_pop_highest(&mut inner.send_head);
-                    let src = crate::ktask(sender_idx).wait_ptr as *const T;
+                if !inner.send_head.is_null() {
+                    let sender = scheduler::wait_list_pop_highest(&mut inner.send_head);
+                    let src = (*sender).wait_ptr as *const T;
                     core::ptr::copy_nonoverlapping(src, inner.buf[inner.tail].as_mut_ptr(), 1);
                     inner.tail = (inner.tail + 1) % N;
                     inner.count += 1;
-                    if scheduler::unblock(sender_idx) {
+                    if scheduler::unblock(sender) {
                         need_preempt = true;
                     }
                 }

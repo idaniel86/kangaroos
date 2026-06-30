@@ -18,10 +18,15 @@ pub mod timer;
 // Re-export proc macros so applications need only `kangaroos` as a dependency.
 pub use kangaroos_macros::{main, task};
 
-use kernel::tcb::Tcb;
-
-// Re-export the kernel type so applications can declare a `static mut` instance.
-pub use kernel::{Kernel, systick_handler};
+// Re-export kernel helpers at the crate root.
+pub use kernel::{TaskStorage, systick_handler};
+// Re-export Tcb so that #[task]-generated code (which calls TaskStorage::tcb_ptr())
+// can name the return type from outside the crate. `#[doc(hidden)]` keeps it off
+// the public docs while remaining part of the stable proc-macro ABI.
+#[cfg(target_arch = "arm")]
+pub use kernel::start;
+#[doc(hidden)]
+pub use kernel::tcb::Tcb;
 
 // Re-export the spawn API so applications need only `use kangaroos::Spawner`.
 pub use task::{SpawnToken, Spawner};
@@ -104,21 +109,12 @@ defmt::timestamp!("{=u32}", {
 });
 
 // Global state referenced by PendSV and SysTick handlers.
-// `TASKS_PTR` is set once by `kernel::start` before interrupts fire;
-// `TASK_COUNT` and `CURRENT_TASK` are updated by PendSV.
+//
+// - `CURRENT`    — pointer to the currently running TCB; updated by PendSV.
+// - `ALL_TASKS`  — head of the all_next intrusive list; prepended by spawn_into.
+// - `TASK_COUNT` — number of spawned tasks (including idle).
 //
 // Safety: single-core; accessed from Handler mode (PendSV/SysTick) or
-// with interrupts disabled (task::spawn / task::yield_now).
-pub(crate) static mut TASKS_PTR: *mut Tcb = core::ptr::null_mut();
-pub(crate) static mut TASK_COUNT: usize = 0;
-pub(crate) static mut CURRENT_TASK: usize = 0;
-
-/// Return a mutable reference to the task at slot `i`.
-///
-/// # Safety
-/// `TASKS_PTR` must be initialised (`kernel::start` has been called) and
-/// `i` < `TASK_COUNT`.
-#[inline(always)]
-pub(crate) unsafe fn ktask(i: usize) -> &'static mut Tcb {
-    unsafe { &mut *TASKS_PTR.add(i) }
-}
+// with interrupts disabled (task::spawn_into / task::yield_now).
+pub(crate) static mut CURRENT: *mut Tcb = core::ptr::null_mut();
+pub(crate) static mut ALL_TASKS: *mut Tcb = core::ptr::null_mut();

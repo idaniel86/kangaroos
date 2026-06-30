@@ -4,10 +4,7 @@
 //! be called from interrupt handlers.
 
 use crate::arch::ArchContext as _;
-use crate::kernel::{
-    Kernel,
-    tcb::{TaskState, Tcb},
-};
+use crate::kernel::tcb::{TaskState, Tcb};
 
 // ---------------------------------------------------------------------------
 // SpawnToken + Spawner — Embassy-style spawn API
@@ -18,6 +15,7 @@ use crate::kernel::{
 /// Produced by calling a `#[kangaroos::task]`-annotated function with its
 /// arguments. Pass the token to [`Spawner::spawn`] inside `#[kangaroos::main]`.
 pub struct SpawnToken {
+    tcb_ptr: *mut Tcb,
     stack_ptr: *mut u32,
     stack_len: usize, // in words
     priority: u8,
@@ -36,6 +34,7 @@ impl SpawnToken {
     /// not intended for direct use.
     #[doc(hidden)]
     pub fn new(
+        tcb_ptr: *mut Tcb,
         stack_ptr: *mut u32,
         stack_len: usize,
         priority: u8,
@@ -44,6 +43,7 @@ impl SpawnToken {
         name: &'static str,
     ) -> Self {
         SpawnToken {
+            tcb_ptr,
             stack_ptr,
             stack_len,
             priority,
@@ -54,46 +54,28 @@ impl SpawnToken {
     }
 }
 
-/// Registers tasks with the kernel before it starts.
-///
-/// Injected as a parameter by `#[kangaroos::main]`. Call [`Spawner::spawn`]
-/// once per task:
+/// Zero-sized spawn helper. Construct with the `Spawner` unit literal.
 ///
 /// ```rust,ignore
-/// #[kangaroos::main(cpu_hz = 8_000_000, max_tasks = 3)]
-/// fn main(spawner: &mut Spawner) {
+/// #[kangaroos::main(cpu_hz = 8_000_000)]
+/// fn main(spawner: Spawner) {
 ///     spawner.spawn(heartbeat());
 ///     spawner.spawn(blink(5, 500));
 /// }
 /// ```
-pub struct Spawner {
-    tasks_ptr: *mut Tcb,
-    max_tasks: usize,
-}
+pub struct Spawner;
 
 // SAFETY: Spawner is only used in `fn main()` before any ISR fires.
 unsafe impl Send for Spawner {}
 
 impl Spawner {
-    /// Create a `Spawner` from a mutable kernel reference.
-    /// Called by `#[main]`-generated code; not intended for direct use.
-    #[doc(hidden)]
-    pub fn new<const N: usize>(kernel: &mut Kernel<N>) -> Self {
-        Spawner {
-            tasks_ptr: kernel.tasks.as_mut_ptr(),
-            max_tasks: N,
-        }
-    }
-
-    /// Register one task. Panics if the kernel task slots are full.
-    pub fn spawn(&mut self, token: SpawnToken) {
-        // SAFETY: tasks_ptr comes from Kernel<N>.tasks and remains valid for
-        // the lifetime of the kernel (static). Token fields are validated by
-        // the #[task] macro generator.
+    /// Register one task.
+    pub fn spawn(&self, token: SpawnToken) {
+        // SAFETY: token fields come from a 'static TaskStorage initialised
+        // by a #[task]-generated factory function.
         unsafe {
             spawn_into(
-                self.tasks_ptr,
-                self.max_tasks,
+                token.tcb_ptr,
                 token.stack_ptr,
                 token.stack_len,
                 token.priority,
@@ -105,15 +87,15 @@ impl Spawner {
     }
 }
 
-/// Low-level non-generic spawn used by [`Spawner`].
+/// Initialise the TCB at `tcb_ptr`, prepend it to `ALL_TASKS`, and increment
+/// `TASK_COUNT`. Called by [`Spawner::spawn`] and `kernel::idle::register`.
 ///
 /// # Safety
-/// `tasks_ptr` must point to an array of at least `max_tasks` [`Tcb`] slots.
-/// `stack_ptr` must point to a `'static mut [u32]` of `stack_len` words.
-#[allow(clippy::too_many_arguments)]
-unsafe fn spawn_into(
-    tasks_ptr: *mut Tcb,
-    max_tasks: usize,
+/// `tcb_ptr` must point to a valid `Tcb` inside a `'static`
+/// [`crate::kernel::TaskStorage`]. `stack_ptr` must point to a
+/// `'static mut [u32; stack_len]`.
+pub(crate) unsafe fn spawn_into(
+    tcb_ptr: *mut Tcb,
     stack_ptr: *mut u32,
     stack_len: usize,
     priority: u8,
@@ -121,84 +103,35 @@ unsafe fn spawn_into(
     entry: fn() -> !,
     name: &'static str,
 ) {
-    // Reconstruct the slice. Caller guarantees the memory is 'static.
     let stack = unsafe { core::slice::from_raw_parts_mut(stack_ptr, stack_len) };
 
     crate::port::interrupt_free(|| unsafe {
-        let idx = crate::TASK_COUNT;
-        assert!(idx < max_tasks, "maximum task count exceeded");
-
         crate::arch::Arch::canary_init(stack);
         let sp = crate::arch::Arch::stack_init(stack, entry);
 
-        *tasks_ptr.add(idx) = Tcb {
-            sp,
-            state: TaskState::Ready,
-            priority,
-            base_priority: priority,
-            time_slice,
-            slice_remaining: time_slice,
-            stack_base: stack_ptr as usize,
-            name,
-            wait_next: 0xFF,
-            wait_ptr: 0,
-        };
+        let tcb = &mut *tcb_ptr;
+        tcb.sp = sp;
+        tcb.state = TaskState::Ready;
+        tcb.priority = priority;
+        tcb.base_priority = priority;
+        tcb.time_slice = time_slice;
+        tcb.slice_remaining = time_slice;
+        tcb.stack_base = stack_ptr as usize;
+        tcb.name = name;
+        tcb.wait_next = core::ptr::null_mut();
+        tcb.wait_ptr = 0;
+
+        // Prepend to ALL_TASKS intrusive list.
+        tcb.all_next = crate::ALL_TASKS;
+        crate::ALL_TASKS = tcb_ptr;
 
         core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
-        crate::TASK_COUNT += 1;
         #[cfg(feature = "defmt")]
         defmt::info!(
             "task '{}': spawned, priority={=u8} stack={=usize}B",
             name,
             priority,
             stack_len * 4
-        );
-    });
-}
-
-///
-/// The stack slice must have a `'static` lifetime (i.e. come from a
-/// `static mut` array). Call this before `kernel::start`, passing the same
-/// `Kernel<N>` instance.
-pub fn spawn<const N: usize>(
-    kernel: &mut Kernel<N>,
-    stack: &'static mut [u32],
-    priority: u8,
-    time_slice: u8,
-    entry: fn() -> !,
-    name: &'static str,
-) {
-    crate::port::interrupt_free(|| unsafe {
-        let idx = crate::TASK_COUNT;
-        assert!(idx < N, "maximum task count exceeded");
-
-        crate::arch::Arch::canary_init(stack);
-        let sp = crate::arch::Arch::stack_init(stack, entry);
-        let stack_base = stack.as_ptr() as usize;
-
-        kernel.tasks[idx] = Tcb {
-            sp,
-            state: TaskState::Ready,
-            priority,
-            base_priority: priority,
-            time_slice,
-            slice_remaining: time_slice,
-            stack_base,
-            name,
-            wait_next: 0xFF,
-            wait_ptr: 0,
-        };
-
-        // Release fence: all stores above must be visible to PendSV before
-        // it can observe the incremented TASK_COUNT.
-        core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
-        crate::TASK_COUNT += 1;
-        #[cfg(feature = "defmt")]
-        defmt::info!(
-            "task '{}': spawned, priority={=u8} stack={=usize}B",
-            name,
-            priority,
-            stack.len() * 4
         );
     });
 }
@@ -211,12 +144,10 @@ pub fn spawn<const N: usize>(
 /// immediately.
 pub fn yield_now() {
     crate::port::interrupt_free(|| unsafe {
-        crate::ktask(crate::CURRENT_TASK).slice_remaining = 0;
+        (*crate::CURRENT).slice_remaining = 0;
     });
     #[cfg(feature = "defmt")]
-    defmt::debug!("task '{}': yielding", unsafe {
-        crate::ktask(crate::CURRENT_TASK).name
-    });
+    defmt::debug!("task '{}': yielding", unsafe { (*crate::CURRENT).name });
     crate::port::trigger_pendsv();
 }
 
@@ -227,7 +158,7 @@ pub fn yield_now() {
 pub fn current_priority() -> u8 {
     // SAFETY: CURRENT_TASK is only mutated by PendSV (Handler mode); this
     // read is effectively atomic on single-core Cortex-M.
-    unsafe { crate::ktask(crate::CURRENT_TASK).priority }
+    unsafe { (*crate::CURRENT).priority }
 }
 
 /// Block the calling task for at least `duration`.
@@ -245,7 +176,7 @@ pub fn sleep(duration: crate::timer::Duration) {
     #[cfg(feature = "defmt")]
     defmt::debug!(
         "task '{}': sleeping {=u64}ms",
-        unsafe { crate::ktask(crate::CURRENT_TASK).name },
+        unsafe { (*crate::CURRENT).name },
         duration.as_millis()
     );
     sleep_until(deadline);
@@ -258,7 +189,7 @@ pub fn sleep(duration: crate::timer::Duration) {
 /// relative duration.
 pub(crate) fn sleep_until(deadline: u64) {
     crate::port::interrupt_free(|| unsafe {
-        crate::ktask(crate::CURRENT_TASK).state = TaskState::Sleeping(deadline);
+        (*crate::CURRENT).state = TaskState::Sleeping(deadline);
     });
     crate::port::trigger_pendsv();
 }
@@ -273,11 +204,9 @@ pub(crate) fn sleep_until(deadline: u64) {
 /// this; it is provided for completeness and one-shot task patterns.
 pub fn exit() -> ! {
     #[cfg(feature = "defmt")]
-    defmt::debug!("task '{}': exiting", unsafe {
-        crate::ktask(crate::CURRENT_TASK).name
-    });
+    defmt::debug!("task '{}': exiting", unsafe { (*crate::CURRENT).name });
     crate::port::interrupt_free(|| unsafe {
-        crate::ktask(crate::CURRENT_TASK).state = TaskState::Dead;
+        (*crate::CURRENT).state = TaskState::Dead;
     });
     crate::port::trigger_pendsv();
     loop {

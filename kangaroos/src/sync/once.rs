@@ -1,6 +1,7 @@
 use core::cell::UnsafeCell;
 
 use crate::kernel::scheduler;
+use crate::kernel::tcb::Tcb;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum OnceState {
@@ -11,7 +12,7 @@ enum OnceState {
 
 struct OnceInner {
     state: OnceState,
-    wait_head: u8, // 0xFF = empty
+    wait_head: *mut Tcb, // null = empty
 }
 
 /// A synchronisation primitive that runs an initialisation closure exactly
@@ -49,7 +50,7 @@ impl Once {
         Once {
             inner: UnsafeCell::new(OnceInner {
                 state: OnceState::Unstarted,
-                wait_head: 0xFF,
+                wait_head: core::ptr::null_mut(),
             }),
             name: None,
         }
@@ -61,7 +62,7 @@ impl Once {
         Once {
             inner: UnsafeCell::new(OnceInner {
                 state: OnceState::Unstarted,
-                wait_head: 0xFF,
+                wait_head: core::ptr::null_mut(),
             }),
             name: Some(name),
         }
@@ -92,9 +93,9 @@ impl Once {
                     defmt::debug!(
                         "once {}: '{}' waiting for initialisation",
                         id,
-                        crate::ktask(crate::CURRENT_TASK).name
+                        (*crate::CURRENT).name
                     );
-                    scheduler::wait_list_push(&mut inner.wait_head, crate::CURRENT_TASK);
+                    scheduler::wait_list_push(&mut inner.wait_head, crate::CURRENT);
                     scheduler::block_current();
                     must_block = true;
                 }
@@ -115,7 +116,7 @@ impl Once {
         // Run the user-supplied initialisation closure outside any critical section.
         #[cfg(feature = "defmt")]
         defmt::debug!("once {}: '{}' initialising", id, unsafe {
-            crate::ktask(crate::CURRENT_TASK).name
+            (*crate::CURRENT).name
         });
         f();
 
@@ -125,17 +126,13 @@ impl Once {
             let inner = &mut *self.inner.get();
             inner.state = OnceState::Done;
             // Drain the entire wait list.
-            while inner.wait_head != 0xFF {
-                let idx = scheduler::wait_list_pop_highest(&mut inner.wait_head);
-                if scheduler::unblock(idx) {
+            while !inner.wait_head.is_null() {
+                let tcb = scheduler::wait_list_pop_highest(&mut inner.wait_head);
+                if scheduler::unblock(tcb) {
                     need_preempt = true;
                 }
                 #[cfg(feature = "defmt")]
-                defmt::debug!(
-                    "once {}: initialised, woke '{}'",
-                    id,
-                    crate::ktask(idx).name
-                );
+                defmt::debug!("once {}: initialised, woke '{}'", id, (*tcb).name);
             }
         });
 

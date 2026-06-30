@@ -1,6 +1,6 @@
 /// Current execution state of a task.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(crate) enum TaskState {
+pub enum TaskState {
     /// Slot not yet initialised (default for the `TASKS` array).
     Uninit,
     /// In the run queue, eligible to be scheduled next.
@@ -18,9 +18,8 @@ pub(crate) enum TaskState {
 }
 
 /// Task control block — one entry in the static `TASKS` array.
-#[derive(Copy, Clone)]
 #[repr(C)]
-pub(crate) struct Tcb {
+pub struct Tcb {
     /// Saved stack pointer, updated by PendSV on every context switch.
     pub(crate) sp: usize,
     /// Execution state.
@@ -41,8 +40,12 @@ pub(crate) struct Tcb {
     /// Optional human-readable name for debugging.
     pub(crate) name: &'static str,
     /// Intrusive singly-linked wait-list next pointer.
-    /// `0xFF` means "end of list". Valid only while `state == Blocked`.
-    pub(crate) wait_next: u8,
+    /// `null` means end of list. Valid only while `state == Blocked`.
+    pub(crate) wait_next: *mut Tcb,
+    /// Intrusive link for the global "all tasks" singly-linked list.
+    /// Set once at spawn time by `spawn_into()`; never modified afterwards.
+    /// Used by canary checks and `find_next()` to iterate every live task.
+    pub(crate) all_next: *mut Tcb,
     /// Raw pointer (as `usize`) to a value parked on this task's frozen stack.
     ///
     /// Used by `Channel` blocking paths:
@@ -66,7 +69,8 @@ impl Tcb {
             slice_remaining: 0,
             stack_base: 0,
             name: "",
-            wait_next: 0xFF,
+            wait_next: core::ptr::null_mut(),
+            all_next: core::ptr::null_mut(),
             wait_ptr: 0,
         }
     }
@@ -97,8 +101,8 @@ mod tests {
         assert_eq!(t.slice_remaining, 0);
         assert_eq!(t.stack_base, 0);
         assert_eq!(t.name, "");
-        // 0xFF is the intrusive-list empty sentinel.
-        assert_eq!(t.wait_next, 0xFF);
+        assert!(t.wait_next.is_null());
+        assert!(t.all_next.is_null());
         assert_eq!(t.wait_ptr, 0);
     }
 
@@ -114,9 +118,9 @@ mod tests {
 
     #[test]
     fn tcb_size_regression() {
-        // On 32-bit ARM the TCB must fit within 64 bytes.
+        // On 32-bit ARM the TCB must fit within 64 bytes (~56 bytes expected).
         // On a 64-bit host each pointer doubles in size (especially the fat
-        // pointer `name: &'static str`), so scale the limit accordingly.
+        // pointer `name: &'static str`), so scale the limit accordingly (~88 bytes).
         let max = if mem::size_of::<usize>() == 4 { 64 } else { 96 };
         assert!(
             mem::size_of::<Tcb>() <= max,
