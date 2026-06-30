@@ -10,7 +10,9 @@ pub enum TaskState {
     /// Currently on-CPU — exactly one task has this state at any time.
     Running { slice_remaining: u8 },
     /// Blocked on a synchronisation primitive (used by Phase 3 sync objects).
-    Blocked,
+    /// Carries the intrusive wait-list next pointer so the field is only
+    /// valid (and only occupies space in the tag) while the task is blocked.
+    Blocked { wait_next: *mut Tcb },
     /// Sleeping until the global tick counter reaches the stored deadline.
     Sleeping(u64),
     /// Task has called [`task::exit()`] and is permanently removed from all
@@ -39,9 +41,6 @@ pub struct Tcb {
     pub(crate) stack_base: usize,
     /// Optional human-readable name for debugging.
     pub(crate) name: &'static str,
-    /// Intrusive singly-linked wait-list next pointer.
-    /// `null` means end of list. Valid only while `state == Blocked`.
-    pub(crate) wait_next: *mut Tcb,
     /// Intrusive link for the global "all tasks" singly-linked list.
     /// Set once at spawn time by `spawn_into()`; never modified afterwards.
     /// Used by canary checks and `find_next()` to iterate every live task.
@@ -68,7 +67,6 @@ impl Tcb {
             time_slice: 0,
             stack_base: 0,
             name: "",
-            wait_next: core::ptr::null_mut(),
             all_next: core::ptr::null_mut(),
             wait_ptr: 0,
         }
@@ -99,17 +97,30 @@ mod tests {
         assert_eq!(t.time_slice, 0);
         assert_eq!(t.stack_base, 0);
         assert_eq!(t.name, "");
-        assert!(t.wait_next.is_null());
         assert!(t.all_next.is_null());
         assert_eq!(t.wait_ptr, 0);
     }
 
     #[test]
     fn task_state_equality() {
-        assert_eq!(TaskState::Ready { slice_remaining: 5 }, TaskState::Ready { slice_remaining: 5 });
-        assert_ne!(TaskState::Ready { slice_remaining: 5 }, TaskState::Ready { slice_remaining: 0 });
-        assert_eq!(TaskState::Running { slice_remaining: 3 }, TaskState::Running { slice_remaining: 3 });
-        assert_ne!(TaskState::Ready { slice_remaining: 0 }, TaskState::Blocked);
+        assert_eq!(
+            TaskState::Ready { slice_remaining: 5 },
+            TaskState::Ready { slice_remaining: 5 }
+        );
+        assert_ne!(
+            TaskState::Ready { slice_remaining: 5 },
+            TaskState::Ready { slice_remaining: 0 }
+        );
+        assert_eq!(
+            TaskState::Running { slice_remaining: 3 },
+            TaskState::Running { slice_remaining: 3 }
+        );
+        assert_ne!(
+            TaskState::Ready { slice_remaining: 0 },
+            TaskState::Blocked {
+                wait_next: core::ptr::null_mut()
+            }
+        );
         assert_eq!(TaskState::Sleeping(100), TaskState::Sleeping(100));
         assert_ne!(TaskState::Sleeping(100), TaskState::Sleeping(200));
         assert_ne!(TaskState::Dead, TaskState::Uninit);

@@ -211,7 +211,9 @@ unsafe extern "C" fn svc_first_task_sp() -> usize {
 
         crate::CURRENT = best;
         let task = &mut *best;
-        let TaskState::Ready { slice_remaining } = task.state else { unreachable!() };
+        let TaskState::Ready { slice_remaining } = task.state else {
+            unreachable!()
+        };
         task.state = TaskState::Running { slice_remaining };
 
         // Arm the hardware stack-limit register before the task starts.
@@ -248,7 +250,9 @@ unsafe extern "C" fn pendsv_save_and_switch(current_sp: usize) -> usize {
         let next = crate::kernel::scheduler::find_next();
         crate::CURRENT = next;
         let task = &mut *next;
-        let TaskState::Ready { slice_remaining } = task.state else { unreachable!() };
+        let TaskState::Ready { slice_remaining } = task.state else {
+            unreachable!()
+        };
         task.state = TaskState::Running { slice_remaining };
 
         // Update PSPLIM to the incoming task's stack base.

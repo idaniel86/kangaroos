@@ -38,8 +38,10 @@ pub(crate) fn find_next() -> *mut Tcb {
         // First task seen at a given priority wins the round-robin tiebreak.
         let mut t = start;
         while !t.is_null() {
-            if matches!((*t).state, TaskState::Ready { .. } | TaskState::Running { .. })
-                && (best.is_null() || (*t).priority < best_prio)
+            if matches!(
+                (*t).state,
+                TaskState::Ready { .. } | TaskState::Running { .. }
+            ) && (best.is_null() || (*t).priority < best_prio)
             {
                 best_prio = (*t).priority;
                 best = t;
@@ -53,8 +55,10 @@ pub(crate) fn find_next() -> *mut Tcb {
         if !current.is_null() {
             let mut t = list_head;
             while !t.is_null() && t != start {
-                if matches!((*t).state, TaskState::Ready { .. } | TaskState::Running { .. })
-                    && (best.is_null() || (*t).priority < best_prio)
+                if matches!(
+                    (*t).state,
+                    TaskState::Ready { .. } | TaskState::Running { .. }
+                ) && (best.is_null() || (*t).priority < best_prio)
                 {
                     best_prio = (*t).priority;
                     best = t;
@@ -108,7 +112,9 @@ pub(crate) fn tick() -> bool {
             if let TaskState::Sleeping(deadline) = (*t).state
                 && now >= deadline
             {
-                (*t).state = TaskState::Ready { slice_remaining: (*t).time_slice };
+                (*t).state = TaskState::Ready {
+                    slice_remaining: (*t).time_slice,
+                };
             }
             // Covers both freshly-woken sleepers and tasks already ready.
             if matches!((*t).state, TaskState::Ready { .. }) && (*t).priority < cur_prio {
@@ -124,7 +130,10 @@ pub(crate) fn tick() -> bool {
 
         // Decrement the running task's time slice.
         let cur = &mut *current;
-        let expired = if let TaskState::Running { ref mut slice_remaining } = cur.state {
+        let expired = if let TaskState::Running {
+            ref mut slice_remaining,
+        } = cur.state
+        {
             if *slice_remaining > 0 {
                 *slice_remaining -= 1;
             }
@@ -166,17 +175,6 @@ pub(crate) fn tick() -> bool {
 // section when a context switch is needed.
 // ---------------------------------------------------------------------------
 
-/// Mark the currently running task as `Blocked`.
-///
-/// # Safety
-/// Must be called inside `interrupt::free`. The caller must trigger PendSV
-/// after leaving the critical section so the scheduler selects a new task.
-pub(crate) unsafe fn block_current() {
-    unsafe {
-        (*crate::CURRENT).state = TaskState::Blocked;
-    }
-}
-
 /// Mark `tcb` as `Ready` and return whether PendSV should fire.
 ///
 /// Returns `true` when the newly-ready task has a higher priority (lower
@@ -187,21 +185,28 @@ pub(crate) unsafe fn block_current() {
 /// Must be called inside `interrupt::free`.
 pub(crate) unsafe fn unblock(tcb: *mut Tcb) -> bool {
     unsafe {
-        (*tcb).state = TaskState::Ready { slice_remaining: (*tcb).time_slice };
+        (*tcb).state = TaskState::Ready {
+            slice_remaining: (*tcb).time_slice,
+        };
         (*tcb).priority < (*crate::CURRENT).priority
     }
 }
 
-/// Prepend `tcb` to the intrusive wait list rooted at `*head`.
+/// Prepend `tcb` to the intrusive wait list rooted at `*head` and mark it
+/// `Blocked` in a single atomic step.
+///
+/// Replaces the former two-step `wait_list_push + block_current` pattern.
+/// The caller must set any task-specific fields (e.g. `wait_ptr`) on `tcb`
+/// *before* calling this function.
 ///
 /// O(1). The list is LIFO at insertion; priority ordering is enforced on
 /// removal by `wait_list_pop_highest`.
 ///
 /// # Safety
 /// Must be called inside `interrupt::free`.
-pub(crate) unsafe fn wait_list_push(head: &mut *mut Tcb, tcb: *mut Tcb) {
+pub(crate) unsafe fn block_and_push(head: &mut *mut Tcb, tcb: *mut Tcb) {
     unsafe {
-        (*tcb).wait_next = *head;
+        (*tcb).state = TaskState::Blocked { wait_next: *head };
         *head = tcb;
     }
 }
@@ -222,32 +227,54 @@ pub(crate) unsafe fn wait_list_pop_highest(head: &mut *mut Tcb) -> *mut Tcb {
         // Walk the list to find the entry with the smallest priority value.
         let mut best = *head;
         let mut best_prio = (*best).priority;
-        let mut cur = (*best).wait_next;
+        let TaskState::Blocked {
+            wait_next: head_next,
+        } = (*best).state
+        else {
+            unreachable!()
+        };
+        let mut cur = head_next;
         while !cur.is_null() {
             let p = (*cur).priority;
             if p < best_prio {
                 best_prio = p;
                 best = cur;
             }
-            cur = (*cur).wait_next;
+            let TaskState::Blocked { wait_next } = (*cur).state else {
+                unreachable!()
+            };
+            cur = wait_next;
         }
 
         // Unlink `best` from the list.
+        let TaskState::Blocked {
+            wait_next: best_next,
+        } = (*best).state
+        else {
+            unreachable!()
+        };
         if *head == best {
-            *head = (*best).wait_next;
+            *head = best_next;
         } else {
             let mut prev = *head;
             loop {
-                let next = (*prev).wait_next;
-                if next == best {
-                    (*prev).wait_next = (*best).wait_next;
+                let TaskState::Blocked {
+                    wait_next: prev_next,
+                } = (*prev).state
+                else {
+                    unreachable!()
+                };
+                if prev_next == best {
+                    if let TaskState::Blocked { ref mut wait_next } = (*prev).state {
+                        *wait_next = best_next;
+                    }
                     break;
                 }
-                prev = next;
+                prev = prev_next;
             }
         }
-
-        (*best).wait_next = core::ptr::null_mut();
+        // `best` transitions to Ready via unblock(); no explicit wait_next
+        // cleanup needed — the Blocked payload is discarded by the state change.
         best
     }
 }
@@ -285,7 +312,9 @@ unsafe extern "C" fn svc_first_task_sp() -> usize {
         }
 
         crate::CURRENT = best;
-        let TaskState::Ready { slice_remaining } = (*best).state else { unreachable!() };
+        let TaskState::Ready { slice_remaining } = (*best).state else {
+            unreachable!()
+        };
         (*best).state = TaskState::Running { slice_remaining };
         (*best).sp
     }
@@ -314,7 +343,9 @@ unsafe extern "C" fn pendsv_save_and_switch(current_sp: usize) -> usize {
 
         let next = find_next();
         crate::CURRENT = next;
-        let TaskState::Ready { slice_remaining } = (*next).state else { unreachable!() };
+        let TaskState::Ready { slice_remaining } = (*next).state else {
+            unreachable!()
+        };
         (*next).state = TaskState::Running { slice_remaining };
         (*next).sp
     }
@@ -373,7 +404,9 @@ mod tests {
         tasks[0].priority = 5;
         tasks[1].state = TaskState::Ready { slice_remaining: 0 };
         tasks[1].priority = 3; // wins
-        tasks[2].state = TaskState::Blocked;
+        tasks[2].state = TaskState::Blocked {
+            wait_next: core::ptr::null_mut(),
+        };
         tasks[2].priority = 1; // blocked
         assert_eq!(find_next(), core::ptr::addr_of_mut!(tasks[1]));
     }
@@ -398,7 +431,9 @@ mod tests {
         with_tasks!(tasks, 3, 0);
         tasks[0].state = TaskState::Running { slice_remaining: 0 };
         tasks[0].priority = 5;
-        tasks[1].state = TaskState::Blocked;
+        tasks[1].state = TaskState::Blocked {
+            wait_next: core::ptr::null_mut(),
+        };
         tasks[1].priority = 0; // highest prio but blocked
         tasks[2].state = TaskState::Ready { slice_remaining: 0 };
         tasks[2].priority = 5;
@@ -410,7 +445,9 @@ mod tests {
     fn tick_wakes_sleeping_task_and_requests_preempt() {
         let _lock = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_tasks!(tasks, 2, 0);
-        tasks[0].state = TaskState::Running { slice_remaining: 10 };
+        tasks[0].state = TaskState::Running {
+            slice_remaining: 10,
+        };
         tasks[0].priority = 5;
         tasks[0].time_slice = 10;
         tasks[1].state = TaskState::Sleeping(5);
@@ -430,7 +467,9 @@ mod tests {
     fn tick_does_not_preempt_when_lower_prio_sleeper_wakes() {
         let _lock = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_tasks!(tasks, 2, 0);
-        tasks[0].state = TaskState::Running { slice_remaining: 10 };
+        tasks[0].state = TaskState::Running {
+            slice_remaining: 10,
+        };
         tasks[0].priority = 2; // higher prio
         tasks[0].time_slice = 10;
         tasks[1].state = TaskState::Sleeping(5);
@@ -463,7 +502,9 @@ mod tests {
     fn tick_increments_global_counter() {
         let _lock = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_tasks!(tasks, 1, 0);
-        tasks[0].state = TaskState::Running { slice_remaining: 100 };
+        tasks[0].state = TaskState::Running {
+            slice_remaining: 100,
+        };
         tasks[0].priority = 5;
         tasks[0].time_slice = 100;
         unsafe {
