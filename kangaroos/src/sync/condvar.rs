@@ -1,11 +1,12 @@
 use core::cell::UnsafeCell;
 
 use crate::kernel::scheduler;
+use crate::kernel::tcb::Tcb;
 use crate::sync::mutex::{Mutex, MutexGuard};
 
 struct CondvarInner {
-    /// Head of the intrusive wait list, `0xFF` = empty.
-    wait_head: u8,
+    /// Head of the intrusive wait list, `null` = empty.
+    wait_head: *mut Tcb,
 }
 
 /// A condition variable for use with [`Mutex`].
@@ -56,7 +57,9 @@ impl Condvar {
     /// for named statics.
     pub const fn new() -> Self {
         Condvar {
-            inner: UnsafeCell::new(CondvarInner { wait_head: 0xFF }),
+            inner: UnsafeCell::new(CondvarInner {
+                wait_head: core::ptr::null_mut(),
+            }),
             name: None,
         }
     }
@@ -65,7 +68,9 @@ impl Condvar {
     /// prefer that macro over calling this directly.
     pub const fn new_named(name: &'static str) -> Self {
         Condvar {
-            inner: UnsafeCell::new(CondvarInner { wait_head: 0xFF }),
+            inner: UnsafeCell::new(CondvarInner {
+                wait_head: core::ptr::null_mut(),
+            }),
             name: Some(name),
         }
     }
@@ -88,12 +93,8 @@ impl Condvar {
         crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
             #[cfg(feature = "defmt")]
-            defmt::debug!(
-                "condvar {}: '{}' waiting",
-                id,
-                crate::ktask(crate::CURRENT_TASK).name
-            );
-            scheduler::wait_list_push(&mut inner.wait_head, crate::CURRENT_TASK);
+            defmt::debug!("condvar {}: '{}' waiting", id, (*crate::CURRENT).name);
+            scheduler::wait_list_push(&mut inner.wait_head, crate::CURRENT);
             scheduler::block_current();
             // Release the mutex inside the same critical section.
             // unlock_internal opens a nested interrupt::free; on single-core
@@ -117,17 +118,13 @@ impl Condvar {
         let id = super::PrimName(self.name, self as *const _ as u32);
         let need_preempt = crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
-            if inner.wait_head == 0xFF {
+            if inner.wait_head.is_null() {
                 return false;
             }
-            let idx = scheduler::wait_list_pop_highest(&mut inner.wait_head);
-            let preempt = scheduler::unblock(idx);
+            let tcb = scheduler::wait_list_pop_highest(&mut inner.wait_head);
+            let preempt = scheduler::unblock(tcb);
             #[cfg(feature = "defmt")]
-            defmt::debug!(
-                "condvar {}: notify_one, woke '{}'",
-                id,
-                crate::ktask(idx).name
-            );
+            defmt::debug!("condvar {}: notify_one, woke '{}'", id, (*tcb).name);
             preempt
         });
 
@@ -146,17 +143,13 @@ impl Condvar {
         let need_preempt = crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
             let mut preempt = false;
-            while inner.wait_head != 0xFF {
-                let idx = scheduler::wait_list_pop_highest(&mut inner.wait_head);
-                if scheduler::unblock(idx) {
+            while !inner.wait_head.is_null() {
+                let tcb = scheduler::wait_list_pop_highest(&mut inner.wait_head);
+                if scheduler::unblock(tcb) {
                     preempt = true;
                 }
                 #[cfg(feature = "defmt")]
-                defmt::debug!(
-                    "condvar {}: notify_all, woke '{}'",
-                    id,
-                    crate::ktask(idx).name
-                );
+                defmt::debug!("condvar {}: notify_all, woke '{}'", id, (*tcb).name);
             }
             preempt
         });

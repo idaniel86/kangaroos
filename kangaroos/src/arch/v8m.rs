@@ -192,25 +192,25 @@ global_asm!(
 #[unsafe(no_mangle)]
 unsafe extern "C" fn svc_first_task_sp() -> usize {
     // SAFETY: called from SVCall (Handler mode) before the scheduler starts.
-    // Single-core Cortex-M: no concurrent mutation of TASKS/TASK_COUNT/
-    // CURRENT_TASK is possible while we are in Handler mode.
+    // Single-core Cortex-M: no concurrent mutation of ALL_TASKS/CURRENT is
+    // possible while we are in Handler mode.
     unsafe {
-        use crate::kernel::tcb::TaskState;
+        use crate::kernel::tcb::{TaskState, Tcb};
 
-        let count = crate::TASK_COUNT;
         let mut best_prio = u8::MAX;
-        let mut best_idx = 0usize;
+        let mut best: *mut Tcb = core::ptr::null_mut();
 
-        for i in 0..count {
-            let t = crate::ktask(i);
-            if matches!(t.state, TaskState::Ready) && t.priority < best_prio {
-                best_prio = t.priority;
-                best_idx = i;
+        let mut t = crate::ALL_TASKS;
+        while !t.is_null() {
+            if matches!((*t).state, TaskState::Ready) && (*t).priority < best_prio {
+                best_prio = (*t).priority;
+                best = t;
             }
+            t = (*t).all_next;
         }
 
-        crate::CURRENT_TASK = best_idx;
-        let task = crate::ktask(best_idx);
+        crate::CURRENT = best;
+        let task = &mut *best;
         task.state = TaskState::Running;
 
         // Arm the hardware stack-limit register before the task starts.
@@ -231,22 +231,22 @@ unsafe extern "C" fn svc_first_task_sp() -> usize {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn pendsv_save_and_switch(current_sp: usize) -> usize {
     // SAFETY: called from PendSV (Handler mode, lowest interrupt priority).
-    // Single-core Cortex-M: exclusive access to TASKS/TASK_COUNT/CURRENT_TASK
-    // is guaranteed — no other Handler-mode code runs concurrently, and
+    // Single-core Cortex-M: exclusive access to ALL_TASKS/CURRENT is
+    // guaranteed — no other Handler-mode code runs concurrently, and
     // Thread-mode code only touches these globals inside interrupt::free.
     unsafe {
         use crate::kernel::tcb::TaskState;
 
-        let old = crate::CURRENT_TASK;
-        crate::ktask(old).sp = current_sp;
+        let old = crate::CURRENT;
+        (*old).sp = current_sp;
 
-        if crate::ktask(old).state == TaskState::Running {
-            crate::ktask(old).state = TaskState::Ready;
+        if (*old).state == TaskState::Running {
+            (*old).state = TaskState::Ready;
         }
 
         let next = crate::kernel::scheduler::find_next();
-        crate::CURRENT_TASK = next;
-        let task = crate::ktask(next);
+        crate::CURRENT = next;
+        let task = &mut *next;
         task.state = TaskState::Running;
 
         // Update PSPLIM to the incoming task's stack base.

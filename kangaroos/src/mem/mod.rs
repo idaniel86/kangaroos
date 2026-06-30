@@ -3,6 +3,7 @@ use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 
 use crate::kernel::scheduler;
+use crate::kernel::tcb::Tcb;
 
 // ---------------------------------------------------------------------------
 // Internal storage
@@ -19,8 +20,8 @@ struct PoolInner<T, const N: usize> {
     next: [u8; N],
     /// Index of the first free slot; `0xFF` = pool exhausted.
     free_head: u8,
-    /// Head of the blocked-alloc intrusive wait list; `0xFF` = nobody waiting.
-    wait_head: u8,
+    /// Head of the blocked-alloc intrusive wait list; `null` = nobody waiting.
+    wait_head: *mut Tcb,
 }
 
 /// A fixed-capacity O(1) static memory pool.
@@ -75,7 +76,7 @@ impl<T: Send, const N: usize> Pool<T, N> {
             nodes: [const { MaybeUninit::uninit() }; N],
             next,
             free_head: if N == 0 { 0xFF } else { 0 },
-            wait_head: 0xFF,
+            wait_head: core::ptr::null_mut(),
         }))
     }
 
@@ -147,15 +148,15 @@ impl<T: Send, const N: usize> Pool<T, N> {
                 );
                 // Store the slot index in wait_ptr so the post-CS read below
                 // works uniformly for both fast and slow paths.
-                crate::ktask(crate::CURRENT_TASK).wait_ptr = s as usize;
+                (*crate::CURRENT).wait_ptr = s as usize;
             } else {
                 // Slow path: park this task.
                 // Store the address of `src` (on our frozen stack) so that
                 // PoolBox::drop can copy the value out on our behalf.
                 // SAFETY: `src` outlives alloc_blocking; the stack is frozen
                 // while this task is blocked.
-                crate::ktask(crate::CURRENT_TASK).wait_ptr = src.as_ptr() as usize;
-                scheduler::wait_list_push(&mut inner.wait_head, crate::CURRENT_TASK);
+                (*crate::CURRENT).wait_ptr = src.as_ptr() as usize;
+                scheduler::wait_list_push(&mut inner.wait_head, crate::CURRENT);
                 scheduler::block_current();
                 must_block = true;
             }
@@ -170,7 +171,7 @@ impl<T: Send, const N: usize> Pool<T, N> {
 
         // Both paths write the assigned slot index into wait_ptr before we
         // reach this point.
-        let slot = unsafe { crate::ktask(crate::CURRENT_TASK).wait_ptr as u8 };
+        let slot = unsafe { (*crate::CURRENT).wait_ptr as u8 };
 
         // `src` (MaybeUninit<T>) goes out of scope here.  Its drop glue is a
         // no-op, so T is NOT dropped — the bytes now live in nodes[slot].
@@ -249,15 +250,15 @@ impl<T, const N: usize> Drop for PoolBox<'_, T, N> {
         // task blocked in alloc_blocking.
         let need_preempt = crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.pool.0.get();
-            if inner.wait_head != 0xFF {
+            if !inner.wait_head.is_null() {
                 // Direct handoff: copy the waiter's pending T (parked on its
                 // frozen stack at wait_ptr) into the now-empty slot, then
                 // overwrite wait_ptr with the slot index as the result.
-                let waiter_idx = scheduler::wait_list_pop_highest(&mut inner.wait_head);
-                let src = crate::ktask(waiter_idx).wait_ptr as *const T;
+                let waiter = scheduler::wait_list_pop_highest(&mut inner.wait_head);
+                let src = (*waiter).wait_ptr as *const T;
                 core::ptr::copy_nonoverlapping(src, inner.nodes[slot as usize].as_mut_ptr(), 1);
-                crate::ktask(waiter_idx).wait_ptr = slot as usize;
-                scheduler::unblock(waiter_idx)
+                (*waiter).wait_ptr = slot as usize;
+                scheduler::unblock(waiter)
             } else {
                 // No waiters: prepend slot to the free list (O(1)).
                 inner.next[slot as usize] = inner.free_head;

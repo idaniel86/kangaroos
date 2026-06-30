@@ -1,4 +1,4 @@
-use crate::kernel::tcb::TaskState;
+use crate::kernel::tcb::{TaskState, Tcb};
 
 /// Monotonic 64-bit tick counter, incremented once per SysTick interrupt.
 ///
@@ -6,46 +6,65 @@ use crate::kernel::tcb::TaskState;
 /// Modified only inside `tick()`, called exclusively from the SysTick handler.
 pub(crate) static mut TICK: u64 = 0;
 
-/// Return the index of the highest-priority ready task.
+/// Return a pointer to the highest-priority ready task.
 ///
-/// Among tasks at equal priority the search wraps around `CURRENT_TASK + 1`,
-/// implementing round-robin ordering within a priority tier.
+/// Among tasks at equal priority the search starts from the node after
+/// `CURRENT`, implementing round-robin ordering within a priority tier.
 ///
 /// # Panics
 /// Panics if no task is ready. Under normal operation the idle task (always
 /// `Ready`) prevents this.
-pub(crate) fn find_next() -> usize {
+pub(crate) fn find_next() -> *mut Tcb {
     // SAFETY: called from PendSV (Handler mode, lowest priority) where no
-    // concurrent mutation of TASKS/TASK_COUNT/CURRENT_TASK is possible on a
+    // concurrent mutation of ALL_TASKS/CURRENT is possible on a
     // single-core device.
     unsafe {
-        let count = crate::TASK_COUNT;
-        let current = crate::CURRENT_TASK;
+        let current = crate::CURRENT;
+        let list_head = crate::ALL_TASKS;
 
-        // Single pass in round-robin order starting just after the current
-        // task.  Because we visit tasks in the order current+1, current+2, …
-        // (wrapping), the *first* task seen at any priority level is the
-        // correct round-robin winner for that level.  A strictly better
-        // (lower) priority replaces the candidate; equal or worse does not.
-        let start = (current + 1) % count;
+        // Round-robin start: node after CURRENT, or list head if CURRENT is
+        // the last node or null (before first launch).
+        let start = if current.is_null() {
+            list_head
+        } else {
+            let n = (*current).all_next;
+            if n.is_null() { list_head } else { n }
+        };
+
         let mut best_prio = u8::MAX;
-        let mut best_idx = usize::MAX;
+        let mut best: *mut Tcb = core::ptr::null_mut();
 
-        for offset in 0..count {
-            let i = (start + offset) % count;
-            let t = crate::ktask(i);
-            // Accept if no candidate yet (covers priority == u8::MAX, i.e. idle),
-            // or if this task has strictly higher priority (lower value).
-            if matches!(t.state, TaskState::Ready | TaskState::Running)
-                && (best_idx == usize::MAX || t.priority < best_prio)
+        // Pass 1: from start to end of list.
+        // First task seen at a given priority wins the round-robin tiebreak.
+        let mut t = start;
+        while !t.is_null() {
+            if matches!((*t).state, TaskState::Ready | TaskState::Running)
+                && (best.is_null() || (*t).priority < best_prio)
             {
-                best_prio = t.priority;
-                best_idx = i;
+                best_prio = (*t).priority;
+                best = t;
+            }
+            t = (*t).all_next;
+        }
+
+        // Pass 2: from list head up to (but not including) start.
+        // Only replaces on strictly higher priority, preserving the
+        // round-robin winner from pass 1 at equal priority.
+        if !current.is_null() {
+            let mut t = list_head;
+            while !t.is_null() && t != start {
+                if matches!((*t).state, TaskState::Ready | TaskState::Running)
+                    && (best.is_null() || (*t).priority < best_prio)
+                {
+                    best_prio = (*t).priority;
+                    best = t;
+                }
+                t = (*t).all_next;
             }
         }
 
-        if best_idx != usize::MAX {
-            return best_idx;
+        if !best.is_null() {
+            return best;
         }
 
         // Unreachable under normal operation (idle task is always Ready).
@@ -66,46 +85,45 @@ pub(crate) fn tick() -> bool {
         TICK = TICK.wrapping_add(1);
         let now = TICK;
 
-        // Hoist both globals: one memory load each, shared across all loops.
-        let count = crate::TASK_COUNT;
-        let current = crate::CURRENT_TASK;
+        let current = crate::CURRENT;
 
         // Guard: scheduler not yet started (svc_first_task_sp has not run yet).
-        if !matches!(crate::ktask(current).state, TaskState::Running) {
+        if current.is_null() || !matches!((*current).state, TaskState::Running) {
             return false;
         }
 
         // cur_prio hoisted before the fused loop so it is available inside it.
-        let cur_prio = crate::ktask(current).priority;
+        let cur_prio = (*current).priority;
         let mut should_preempt = false;
 
         // Fused single pass: wake sleeping tasks whose deadline has passed, and
         // simultaneously check whether any ready task has higher priority than
-        // the current one. `continue` on i == current avoids creating an
-        // aliased `&mut Tcb` while `cur` is borrowed later.
-        for i in 0..count {
-            if i == current {
+        // the current one. Skip `current` to avoid aliased mutable access.
+        let mut t = crate::ALL_TASKS;
+        while !t.is_null() {
+            if t == current {
+                t = (*t).all_next;
                 continue;
             }
-            let t = crate::ktask(i); // one pointer load per iteration
-            if let TaskState::Sleeping(deadline) = t.state
+            if let TaskState::Sleeping(deadline) = (*t).state
                 && now >= deadline
             {
-                t.state = TaskState::Ready;
+                (*t).state = TaskState::Ready;
             }
             // Covers both freshly-woken sleepers and tasks already ready.
-            if matches!(t.state, TaskState::Ready) && t.priority < cur_prio {
+            if matches!((*t).state, TaskState::Ready) && (*t).priority < cur_prio {
                 should_preempt = true;
                 // Do not break — remaining sleepers must still be woken.
             }
+            t = (*t).all_next;
         }
 
         if should_preempt {
             return true;
         }
 
-        // Decrement the running task's time slice (single ktask call).
-        let cur = crate::ktask(current);
+        // Decrement the running task's time slice.
+        let cur = &mut *current;
         if cur.slice_remaining > 0 {
             cur.slice_remaining -= 1;
         }
@@ -113,14 +131,15 @@ pub(crate) fn tick() -> bool {
         // On slice expiry, rotate if an equal-priority peer is ready.
         if cur.slice_remaining == 0 {
             cur.slice_remaining = cur.time_slice;
-            for i in 0..count {
-                if i == current {
-                    continue;
-                }
-                let t = crate::ktask(i); // one pointer load per iteration
-                if matches!(t.state, TaskState::Ready) && t.priority == cur_prio {
+            let mut t = crate::ALL_TASKS;
+            while !t.is_null() {
+                if t != current
+                    && matches!((*t).state, TaskState::Ready)
+                    && (*t).priority == cur_prio
+                {
                     return true;
                 }
+                t = (*t).all_next;
             }
         }
 
@@ -145,11 +164,11 @@ pub(crate) fn tick() -> bool {
 /// after leaving the critical section so the scheduler selects a new task.
 pub(crate) unsafe fn block_current() {
     unsafe {
-        crate::ktask(crate::CURRENT_TASK).state = TaskState::Blocked;
+        (*crate::CURRENT).state = TaskState::Blocked;
     }
 }
 
-/// Mark task `idx` as `Ready` and return whether PendSV should fire.
+/// Mark `tcb` as `Ready` and return whether PendSV should fire.
 ///
 /// Returns `true` when the newly-ready task has a higher priority (lower
 /// number) than the currently running task, indicating that preemption is
@@ -157,76 +176,70 @@ pub(crate) unsafe fn block_current() {
 ///
 /// # Safety
 /// Must be called inside `interrupt::free`.
-pub(crate) unsafe fn unblock(idx: usize) -> bool {
+pub(crate) unsafe fn unblock(tcb: *mut Tcb) -> bool {
     unsafe {
-        crate::ktask(idx).state = TaskState::Ready;
-        crate::ktask(idx).priority < crate::ktask(crate::CURRENT_TASK).priority
+        (*tcb).state = TaskState::Ready;
+        (*tcb).priority < (*crate::CURRENT).priority
     }
 }
 
-/// Prepend `task_idx` to the intrusive wait list rooted at `*head`.
+/// Prepend `tcb` to the intrusive wait list rooted at `*head`.
 ///
 /// O(1). The list is LIFO at insertion; priority ordering is enforced on
 /// removal by `wait_list_pop_highest`.
 ///
 /// # Safety
 /// Must be called inside `interrupt::free`.
-pub(crate) unsafe fn wait_list_push(head: &mut u8, task_idx: usize) {
-    debug_assert!(
-        task_idx <= 254,
-        "task_idx {task_idx} exceeds u8 sentinel limit (254)"
-    );
+pub(crate) unsafe fn wait_list_push(head: &mut *mut Tcb, tcb: *mut Tcb) {
     unsafe {
-        crate::ktask(task_idx).wait_next = *head;
+        (*tcb).wait_next = *head;
+        *head = tcb;
     }
-    *head = task_idx as u8;
 }
 
 /// Remove and return the highest-priority (lowest `priority` value) task
 /// from the wait list rooted at `*head`.
 ///
-/// O(N waiters). Returns `usize::MAX` if the list is empty — callers should
-/// check `*head != 0xFF` before calling.
+/// O(N waiters). Returns `null` if the list is empty.
 ///
 /// # Safety
 /// Must be called inside `interrupt::free`.
-pub(crate) unsafe fn wait_list_pop_highest(head: &mut u8) -> usize {
-    if *head == 0xFF {
-        return usize::MAX;
+pub(crate) unsafe fn wait_list_pop_highest(head: &mut *mut Tcb) -> *mut Tcb {
+    if (*head).is_null() {
+        return core::ptr::null_mut();
     }
 
     unsafe {
         // Walk the list to find the entry with the smallest priority value.
-        let mut best_idx = *head as usize;
-        let mut best_prio = crate::ktask(best_idx).priority;
-        let mut cur = crate::ktask(best_idx).wait_next;
-        while cur != 0xFF {
-            let cur_idx = cur as usize;
-            let p = crate::ktask(cur_idx).priority;
+        let mut best = *head;
+        let mut best_prio = (*best).priority;
+        let mut cur = (*best).wait_next;
+        while !cur.is_null() {
+            let p = (*cur).priority;
             if p < best_prio {
                 best_prio = p;
-                best_idx = cur_idx;
+                best = cur;
             }
-            cur = crate::ktask(cur_idx).wait_next;
+            cur = (*cur).wait_next;
         }
 
-        // Unlink `best_idx` from the list.
-        if *head as usize == best_idx {
-            *head = crate::ktask(best_idx).wait_next;
+        // Unlink `best` from the list.
+        if *head == best {
+            *head = (*best).wait_next;
         } else {
-            let mut prev = *head as usize;
+            let mut prev = *head;
             loop {
-                let next = crate::ktask(prev).wait_next as usize;
-                if next == best_idx {
-                    crate::ktask(prev).wait_next = crate::ktask(best_idx).wait_next;
+                let next = (*prev).wait_next;
+                if next == best {
+                    (*prev).wait_next = (*best).wait_next;
                     break;
                 }
                 prev = next;
             }
         }
 
-        crate::ktask(best_idx).wait_next = 0xFF;
-        best_idx
+        (*best).wait_next = core::ptr::null_mut();
+        best
     }
 }
 
@@ -241,30 +254,30 @@ pub(crate) unsafe fn wait_list_pop_highest(head: &mut u8) -> usize {
 ///
 /// Called from the SVCall stub in each arch module via `bl svc_first_task_sp`.
 /// Finds the highest-priority `Ready` task, marks it `Running`, stores its
-/// index in `CURRENT_TASK`, and returns its SP so the assembly performs the
+/// pointer in `CURRENT`, and returns its SP so the assembly performs the
 /// first `EXC_RETURN` into task context.
 #[unsafe(no_mangle)]
 #[cfg(not(armv8m))]
 unsafe extern "C" fn svc_first_task_sp() -> usize {
     // SAFETY: called from SVCall (Handler mode) before the scheduler starts.
-    // Single-core Cortex-M: no concurrent mutation of TASKS/TASK_COUNT/
-    // CURRENT_TASK is possible while we are in Handler mode.
+    // Single-core Cortex-M: no concurrent mutation of ALL_TASKS/CURRENT is
+    // possible while we are in Handler mode.
     unsafe {
-        let count = crate::TASK_COUNT;
         let mut best_prio = u8::MAX;
-        let mut best_idx = 0usize;
+        let mut best: *mut Tcb = core::ptr::null_mut();
 
-        for i in 0..count {
-            let t = crate::ktask(i);
-            if matches!(t.state, TaskState::Ready) && t.priority < best_prio {
-                best_prio = t.priority;
-                best_idx = i;
+        let mut t = crate::ALL_TASKS;
+        while !t.is_null() {
+            if matches!((*t).state, TaskState::Ready) && (*t).priority < best_prio {
+                best_prio = (*t).priority;
+                best = t;
             }
+            t = (*t).all_next;
         }
 
-        crate::CURRENT_TASK = best_idx;
-        crate::ktask(best_idx).state = TaskState::Running;
-        crate::ktask(best_idx).sp
+        crate::CURRENT = best;
+        (*best).state = TaskState::Running;
+        (*best).sp
     }
 }
 
@@ -278,22 +291,21 @@ unsafe extern "C" fn svc_first_task_sp() -> usize {
 #[cfg(not(armv8m))]
 unsafe extern "C" fn pendsv_save_and_switch(current_sp: usize) -> usize {
     // SAFETY: called from PendSV (Handler mode, lowest interrupt priority).
-    // Single-core Cortex-M: exclusive access to TASKS/TASK_COUNT/CURRENT_TASK
-    // is guaranteed — no other Handler-mode code runs concurrently, and
+    // Single-core Cortex-M: exclusive access to ALL_TASKS/CURRENT is
+    // guaranteed — no other Handler-mode code runs concurrently, and
     // Thread-mode code only touches these globals inside interrupt::free.
     unsafe {
-        let old = crate::CURRENT_TASK;
-        crate::ktask(old).sp = current_sp;
+        let old = crate::CURRENT;
+        (*old).sp = current_sp;
 
-        if crate::ktask(old).state == TaskState::Running {
-            crate::ktask(old).state = TaskState::Ready;
+        if (*old).state == TaskState::Running {
+            (*old).state = TaskState::Ready;
         }
 
         let next = find_next();
-        crate::CURRENT_TASK = next;
-        crate::ktask(next).state = TaskState::Running;
-
-        crate::ktask(next).sp
+        crate::CURRENT = next;
+        (*next).state = TaskState::Running;
+        (*next).sp
     }
 }
 
@@ -308,8 +320,8 @@ mod tests {
     use crate::kernel::tcb::{TaskState, Tcb};
     use std::sync::Mutex;
 
-    // All scheduler tests share global mutable state (TASKS_PTR, TASK_COUNT,
-    // CURRENT_TASK, TICK).  Serialize them with a single lock so parallel
+    // All scheduler tests share global mutable state (ALL_TASKS, CURRENT,
+    // TASK_COUNT, TICK).  Serialize them with a single lock so parallel
     // test threads do not corrupt each other's task arrays.
     static SCHED_LOCK: Mutex<()> = Mutex::new(());
 
@@ -317,20 +329,23 @@ mod tests {
     // globals.  Returns a guard that resets the globals on drop.
     macro_rules! with_tasks {
         ($tasks:ident, $count:expr, $current:expr) => {
-            let mut $tasks = [Tcb::zeroed(); $count];
+            let mut $tasks: [Tcb; $count] = core::array::from_fn(|_| Tcb::zeroed());
             let _guard = {
                 unsafe {
-                    crate::TASKS_PTR = $tasks.as_mut_ptr();
-                    crate::TASK_COUNT = $count;
-                    crate::CURRENT_TASK = $current;
+                    // Build the all_next intrusive linked list through the array.
+                    for i in 0..$count - 1 {
+                        $tasks[i].all_next = core::ptr::addr_of_mut!($tasks[i + 1]);
+                    }
+                    crate::ALL_TASKS = core::ptr::addr_of_mut!($tasks[0]);
+                    crate::CURRENT = core::ptr::addr_of_mut!($tasks[$current]);
                 }
-                // Return a guard that clears the pointer when dropped.
+                // Return a guard that clears the globals when dropped.
                 struct Guard;
                 impl Drop for Guard {
                     fn drop(&mut self) {
                         unsafe {
-                            crate::TASKS_PTR = core::ptr::null_mut();
-                            crate::TASK_COUNT = 0;
+                            crate::ALL_TASKS = core::ptr::null_mut();
+                            crate::CURRENT = core::ptr::null_mut();
                         }
                     }
                 }
@@ -349,7 +364,7 @@ mod tests {
         tasks[1].priority = 3; // wins
         tasks[2].state = TaskState::Blocked;
         tasks[2].priority = 1; // blocked
-        assert_eq!(find_next(), 1);
+        assert_eq!(find_next(), core::ptr::addr_of_mut!(tasks[1]));
     }
 
     #[test]
@@ -363,7 +378,7 @@ mod tests {
         tasks[2].state = TaskState::Ready;
         tasks[2].priority = 5;
         // Search starts at current+1 = 1, so task 1 is the round-robin winner.
-        assert_eq!(find_next(), 1);
+        assert_eq!(find_next(), core::ptr::addr_of_mut!(tasks[1]));
     }
 
     #[test]
@@ -377,7 +392,7 @@ mod tests {
         tasks[2].state = TaskState::Ready;
         tasks[2].priority = 5;
         // Only task 2 is ready → it must be selected despite lower prio than task 1.
-        assert_eq!(find_next(), 2);
+        assert_eq!(find_next(), core::ptr::addr_of_mut!(tasks[2]));
     }
 
     #[test]

@@ -1,11 +1,12 @@
 use core::cell::UnsafeCell;
 
 use crate::kernel::scheduler;
+use crate::kernel::tcb::Tcb;
 
 struct SemaphoreInner {
     count: u8,
     max: u8,
-    wait_head: u8, // 0xFF = empty
+    wait_head: *mut Tcb, // null = empty
 }
 
 /// Counting semaphore.
@@ -43,7 +44,7 @@ impl Semaphore {
             inner: UnsafeCell::new(SemaphoreInner {
                 count: initial,
                 max,
-                wait_head: 0xFF,
+                wait_head: core::ptr::null_mut(),
             }),
             name: None,
         }
@@ -56,7 +57,7 @@ impl Semaphore {
             inner: UnsafeCell::new(SemaphoreInner {
                 count: initial,
                 max,
-                wait_head: 0xFF,
+                wait_head: core::ptr::null_mut(),
             }),
             name: Some(name),
         }
@@ -78,7 +79,7 @@ impl Semaphore {
                 defmt::debug!(
                     "semaphore {}: taken by '{}', count={=u8}",
                     id,
-                    crate::ktask(crate::CURRENT_TASK).name,
+                    (*crate::CURRENT).name,
                     inner.count
                 );
             } else {
@@ -86,9 +87,9 @@ impl Semaphore {
                 defmt::debug!(
                     "semaphore {}: empty, '{}' blocking",
                     id,
-                    crate::ktask(crate::CURRENT_TASK).name
+                    (*crate::CURRENT).name
                 );
-                scheduler::wait_list_push(&mut inner.wait_head, crate::CURRENT_TASK);
+                scheduler::wait_list_push(&mut inner.wait_head, crate::CURRENT);
                 scheduler::block_current();
                 must_block = true;
             }
@@ -130,12 +131,12 @@ impl Semaphore {
 
         crate::port::interrupt_free(|| unsafe {
             let inner = &mut *self.inner.get();
-            if inner.wait_head != 0xFF {
+            if !inner.wait_head.is_null() {
                 // Hand the token directly to the highest-priority waiter.
-                let idx = scheduler::wait_list_pop_highest(&mut inner.wait_head);
-                need_preempt = scheduler::unblock(idx);
+                let tcb = scheduler::wait_list_pop_highest(&mut inner.wait_head);
+                need_preempt = scheduler::unblock(tcb);
                 #[cfg(feature = "defmt")]
-                defmt::debug!("semaphore {}: given, woke '{}'", id, crate::ktask(idx).name);
+                defmt::debug!("semaphore {}: given, woke '{}'", id, (*tcb).name);
             } else if inner.count < inner.max {
                 inner.count += 1;
                 #[cfg(feature = "defmt")]

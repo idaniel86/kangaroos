@@ -1,14 +1,15 @@
 use core::cell::UnsafeCell;
 
 use crate::kernel::scheduler;
+use crate::kernel::tcb::Tcb;
 
 struct EventGroupInner {
     /// Current 32-bit flag state.
     bits: u32,
-    /// Head of the intrusive wait list for [`wait_any`] callers. `0xFF` = empty.
-    wait_any_head: u8,
-    /// Head of the intrusive wait list for [`wait_all`] callers. `0xFF` = empty.
-    wait_all_head: u8,
+    /// Head of the intrusive wait list for [`wait_any`] callers. `null` = empty.
+    wait_any_head: *mut Tcb,
+    /// Head of the intrusive wait list for [`wait_all`] callers. `null` = empty.
+    wait_all_head: *mut Tcb,
 }
 
 /// A 32-bit event flag group.
@@ -56,8 +57,8 @@ impl EventGroup {
         EventGroup {
             inner: UnsafeCell::new(EventGroupInner {
                 bits: 0,
-                wait_any_head: 0xFF,
-                wait_all_head: 0xFF,
+                wait_any_head: core::ptr::null_mut(),
+                wait_all_head: core::ptr::null_mut(),
             }),
             name: None,
         }
@@ -69,8 +70,8 @@ impl EventGroup {
         EventGroup {
             inner: UnsafeCell::new(EventGroupInner {
                 bits: 0,
-                wait_any_head: 0xFF,
-                wait_all_head: 0xFF,
+                wait_any_head: core::ptr::null_mut(),
+                wait_all_head: core::ptr::null_mut(),
             }),
             name: Some(name),
         }
@@ -97,33 +98,32 @@ impl EventGroup {
             // Unblock any task whose mask has at least one bit overlapping the
             // current bit state.  Clear the matched bits so they are not
             // delivered twice.
-            let mut prev: u8 = 0xFF; // 0xFF → previous is the list head
+            let mut prev: *mut Tcb = core::ptr::null_mut();
             let mut cur = inner.wait_any_head;
-            while cur != 0xFF {
-                let idx = cur as usize;
-                let next = crate::ktask(idx).wait_next;
-                let task_mask = crate::ktask(idx).wait_ptr as u32;
+            while !cur.is_null() {
+                let next = (*cur).wait_next;
+                let task_mask = (*cur).wait_ptr as u32;
                 let matched = inner.bits & task_mask;
                 if matched != 0 {
                     // Remove this node from the list.
-                    if prev == 0xFF {
+                    if prev.is_null() {
                         inner.wait_any_head = next;
                     } else {
-                        crate::ktask(prev as usize).wait_next = next;
+                        (*prev).wait_next = next;
                     }
-                    crate::ktask(idx).wait_next = 0xFF;
+                    (*cur).wait_next = core::ptr::null_mut();
                     // Consume the matched bits.
                     inner.bits &= !matched;
                     // Store the matched bits for the task to read on resume.
-                    crate::ktask(idx).wait_ptr = matched as usize;
-                    if scheduler::unblock(idx) {
+                    (*cur).wait_ptr = matched as usize;
+                    if scheduler::unblock(cur) {
                         preempt = true;
                     }
                     #[cfg(feature = "defmt")]
                     defmt::debug!(
                         "event_group {}: wait_any satisfied, woke '{}' matched={=u32:#x}",
                         id,
-                        crate::ktask(idx).name,
+                        (*cur).name,
                         matched
                     );
                     // prev unchanged — it now links directly to `next`.
@@ -135,28 +135,27 @@ impl EventGroup {
 
             // --- Scan wait_all list ---
             // Unblock any task whose entire mask is now satisfied.
-            prev = 0xFF;
+            prev = core::ptr::null_mut();
             cur = inner.wait_all_head;
-            while cur != 0xFF {
-                let idx = cur as usize;
-                let next = crate::ktask(idx).wait_next;
-                let task_mask = crate::ktask(idx).wait_ptr as u32;
+            while !cur.is_null() {
+                let next = (*cur).wait_next;
+                let task_mask = (*cur).wait_ptr as u32;
                 if inner.bits & task_mask == task_mask {
-                    if prev == 0xFF {
+                    if prev.is_null() {
                         inner.wait_all_head = next;
                     } else {
-                        crate::ktask(prev as usize).wait_next = next;
+                        (*prev).wait_next = next;
                     }
-                    crate::ktask(idx).wait_next = 0xFF;
+                    (*cur).wait_next = core::ptr::null_mut();
                     inner.bits &= !task_mask;
-                    if scheduler::unblock(idx) {
+                    if scheduler::unblock(cur) {
                         preempt = true;
                     }
                     #[cfg(feature = "defmt")]
                     defmt::debug!(
                         "event_group {}: wait_all satisfied, woke '{}' mask={=u32:#x}",
                         id,
-                        crate::ktask(idx).name,
+                        (*cur).name,
                         task_mask
                     );
                 } else {
@@ -203,18 +202,18 @@ impl EventGroup {
                 // Fast path: at least one requested bit is already set.
                 inner.bits &= !matched;
                 // Store matched so the post-CS read below works uniformly.
-                crate::ktask(crate::CURRENT_TASK).wait_ptr = matched as usize;
+                (*crate::CURRENT).wait_ptr = matched as usize;
             } else {
                 // Slow path: store the full requested mask so set() can match.
                 #[cfg(feature = "defmt")]
                 defmt::debug!(
                     "event_group {}: wait_any blocking, '{}' mask={=u32:#x}",
                     id,
-                    crate::ktask(crate::CURRENT_TASK).name,
+                    (*crate::CURRENT).name,
                     mask
                 );
-                crate::ktask(crate::CURRENT_TASK).wait_ptr = mask as usize;
-                scheduler::wait_list_push(&mut inner.wait_any_head, crate::CURRENT_TASK);
+                (*crate::CURRENT).wait_ptr = mask as usize;
+                scheduler::wait_list_push(&mut inner.wait_any_head, crate::CURRENT);
                 scheduler::block_current();
                 must_block = true;
             }
@@ -229,7 +228,7 @@ impl EventGroup {
         // Return the bits that were matched, written by set() or the fast path.
         // SAFETY: wait_ptr is written inside interrupt::free before unblock(),
         // establishing a happens-before with the task resuming here.
-        unsafe { crate::ktask(crate::CURRENT_TASK).wait_ptr as u32 }
+        unsafe { (*crate::CURRENT).wait_ptr as u32 }
     }
 
     /// Block until **all** of the bits in `mask` are set.
@@ -251,11 +250,11 @@ impl EventGroup {
                 defmt::debug!(
                     "event_group {}: wait_all blocking, '{}' mask={=u32:#x}",
                     id,
-                    crate::ktask(crate::CURRENT_TASK).name,
+                    (*crate::CURRENT).name,
                     mask
                 );
-                crate::ktask(crate::CURRENT_TASK).wait_ptr = mask as usize;
-                scheduler::wait_list_push(&mut inner.wait_all_head, crate::CURRENT_TASK);
+                (*crate::CURRENT).wait_ptr = mask as usize;
+                scheduler::wait_list_push(&mut inner.wait_all_head, crate::CURRENT);
                 scheduler::block_current();
                 must_block = true;
             }
@@ -281,23 +280,22 @@ impl EventGroup {
             let mut preempt = false;
 
             // Scan wait_any
-            let mut prev: u8 = 0xFF;
+            let mut prev: *mut Tcb = core::ptr::null_mut();
             let mut cur = inner.wait_any_head;
-            while cur != 0xFF {
-                let idx = cur as usize;
-                let next = crate::ktask(idx).wait_next;
-                let task_mask = crate::ktask(idx).wait_ptr as u32;
+            while !cur.is_null() {
+                let next = (*cur).wait_next;
+                let task_mask = (*cur).wait_ptr as u32;
                 let matched = inner.bits & task_mask;
                 if matched != 0 {
-                    if prev == 0xFF {
+                    if prev.is_null() {
                         inner.wait_any_head = next;
                     } else {
-                        crate::ktask(prev as usize).wait_next = next;
+                        (*prev).wait_next = next;
                     }
-                    crate::ktask(idx).wait_next = 0xFF;
+                    (*cur).wait_next = core::ptr::null_mut();
                     inner.bits &= !matched;
-                    crate::ktask(idx).wait_ptr = matched as usize;
-                    if scheduler::unblock(idx) {
+                    (*cur).wait_ptr = matched as usize;
+                    if scheduler::unblock(cur) {
                         preempt = true;
                     }
                 } else {
@@ -307,21 +305,20 @@ impl EventGroup {
             }
 
             // Scan wait_all
-            prev = 0xFF;
+            prev = core::ptr::null_mut();
             cur = inner.wait_all_head;
-            while cur != 0xFF {
-                let idx = cur as usize;
-                let next = crate::ktask(idx).wait_next;
-                let task_mask = crate::ktask(idx).wait_ptr as u32;
+            while !cur.is_null() {
+                let next = (*cur).wait_next;
+                let task_mask = (*cur).wait_ptr as u32;
                 if inner.bits & task_mask == task_mask {
-                    if prev == 0xFF {
+                    if prev.is_null() {
                         inner.wait_all_head = next;
                     } else {
-                        crate::ktask(prev as usize).wait_next = next;
+                        (*prev).wait_next = next;
                     }
-                    crate::ktask(idx).wait_next = 0xFF;
+                    (*cur).wait_next = core::ptr::null_mut();
                     inner.bits &= !task_mask;
-                    if scheduler::unblock(idx) {
+                    if scheduler::unblock(cur) {
                         preempt = true;
                     }
                 } else {
