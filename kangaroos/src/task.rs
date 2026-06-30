@@ -63,6 +63,7 @@ impl SpawnToken {
 ///     spawner.spawn(blink(5, 500));
 /// }
 /// ```
+#[derive(Copy, Clone)]
 pub struct Spawner;
 
 // SAFETY: Spawner is only used in `fn main()` before any ISR fires.
