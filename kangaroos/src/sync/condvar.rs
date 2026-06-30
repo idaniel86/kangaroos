@@ -94,8 +94,7 @@ impl Condvar {
             let inner = &mut *self.inner.get();
             #[cfg(feature = "defmt")]
             defmt::debug!("condvar {}: '{}' waiting", id, (*crate::CURRENT).name);
-            scheduler::wait_list_push(&mut inner.wait_head, crate::CURRENT);
-            scheduler::block_current();
+            scheduler::block_and_push(&mut inner.wait_head, crate::CURRENT);
             // Release the mutex inside the same critical section.
             // unlock_internal opens a nested interrupt::free; on single-core
             // ARM, CPSID is idempotent so nesting is safe.  It may itself

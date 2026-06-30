@@ -89,8 +89,7 @@ impl Semaphore {
                     id,
                     (*crate::CURRENT).name
                 );
-                scheduler::wait_list_push(&mut inner.wait_head, crate::CURRENT);
-                scheduler::block_current();
+                scheduler::block_and_push(&mut inner.wait_head, crate::CURRENT);
                 must_block = true;
             }
         });

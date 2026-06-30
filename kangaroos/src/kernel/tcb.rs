@@ -4,11 +4,15 @@ pub enum TaskState {
     /// Slot not yet initialised (default for the `TASKS` array).
     Uninit,
     /// In the run queue, eligible to be scheduled next.
-    Ready,
+    /// Carries the remaining time-slice ticks so the quantum is preserved
+    /// when the task is priority-preempted before its slice expires.
+    Ready { slice_remaining: u8 },
     /// Currently on-CPU — exactly one task has this state at any time.
-    Running,
+    Running { slice_remaining: u8 },
     /// Blocked on a synchronisation primitive (used by Phase 3 sync objects).
-    Blocked,
+    /// Carries the intrusive wait-list next pointer so the field is only
+    /// valid (and only occupies space in the tag) while the task is blocked.
+    Blocked { wait_next: *mut Tcb },
     /// Sleeping until the global tick counter reaches the stored deadline.
     Sleeping(u64),
     /// Task has called [`task::exit()`] and is permanently removed from all
@@ -31,17 +35,12 @@ pub struct Tcb {
     /// `Mutex` restores `priority` to this value when the lock is released.
     pub(crate) base_priority: u8,
     /// Configured time-slice quantum for this task in SysTick ticks.
-    /// Reloaded into `slice_remaining` after each expiry.
+    /// Reloaded into the `slice_remaining` field of `Ready`/`Running` after each expiry.
     pub(crate) time_slice: u8,
-    /// Time-slice ticks remaining before round-robin rotation within a priority tier.
-    pub(crate) slice_remaining: u8,
     /// Lowest address of the task's stack slice, used for canary verification.
     pub(crate) stack_base: usize,
     /// Optional human-readable name for debugging.
     pub(crate) name: &'static str,
-    /// Intrusive singly-linked wait-list next pointer.
-    /// `null` means end of list. Valid only while `state == Blocked`.
-    pub(crate) wait_next: *mut Tcb,
     /// Intrusive link for the global "all tasks" singly-linked list.
     /// Set once at spawn time by `spawn_into()`; never modified afterwards.
     /// Used by canary checks and `find_next()` to iterate every live task.
@@ -66,10 +65,8 @@ impl Tcb {
             priority: 0,
             base_priority: 0,
             time_slice: 0,
-            slice_remaining: 0,
             stack_base: 0,
             name: "",
-            wait_next: core::ptr::null_mut(),
             all_next: core::ptr::null_mut(),
             wait_ptr: 0,
         }
@@ -98,19 +95,32 @@ mod tests {
         assert_eq!(t.priority, 0);
         assert_eq!(t.base_priority, 0);
         assert_eq!(t.time_slice, 0);
-        assert_eq!(t.slice_remaining, 0);
         assert_eq!(t.stack_base, 0);
         assert_eq!(t.name, "");
-        assert!(t.wait_next.is_null());
         assert!(t.all_next.is_null());
         assert_eq!(t.wait_ptr, 0);
     }
 
     #[test]
     fn task_state_equality() {
-        assert_eq!(TaskState::Ready, TaskState::Ready);
-        assert_eq!(TaskState::Running, TaskState::Running);
-        assert_ne!(TaskState::Ready, TaskState::Blocked);
+        assert_eq!(
+            TaskState::Ready { slice_remaining: 5 },
+            TaskState::Ready { slice_remaining: 5 }
+        );
+        assert_ne!(
+            TaskState::Ready { slice_remaining: 5 },
+            TaskState::Ready { slice_remaining: 0 }
+        );
+        assert_eq!(
+            TaskState::Running { slice_remaining: 3 },
+            TaskState::Running { slice_remaining: 3 }
+        );
+        assert_ne!(
+            TaskState::Ready { slice_remaining: 0 },
+            TaskState::Blocked {
+                wait_next: core::ptr::null_mut()
+            }
+        );
         assert_eq!(TaskState::Sleeping(100), TaskState::Sleeping(100));
         assert_ne!(TaskState::Sleeping(100), TaskState::Sleeping(200));
         assert_ne!(TaskState::Dead, TaskState::Uninit);

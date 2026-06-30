@@ -1,7 +1,7 @@
 use core::cell::UnsafeCell;
 
 use crate::kernel::scheduler;
-use crate::kernel::tcb::Tcb;
+use crate::kernel::tcb::{TaskState, Tcb};
 
 struct EventGroupInner {
     /// Current 32-bit flag state.
@@ -101,17 +101,20 @@ impl EventGroup {
             let mut prev: *mut Tcb = core::ptr::null_mut();
             let mut cur = inner.wait_any_head;
             while !cur.is_null() {
-                let next = (*cur).wait_next;
+                let TaskState::Blocked { wait_next: next } = (*cur).state else {
+                    unreachable!()
+                };
                 let task_mask = (*cur).wait_ptr as u32;
                 let matched = inner.bits & task_mask;
                 if matched != 0 {
                     // Remove this node from the list.
                     if prev.is_null() {
                         inner.wait_any_head = next;
-                    } else {
-                        (*prev).wait_next = next;
+                    } else if let TaskState::Blocked { ref mut wait_next } = (*prev).state {
+                        *wait_next = next;
                     }
-                    (*cur).wait_next = core::ptr::null_mut();
+                    // Matched node transitions to Ready via unblock(); the
+                    // Blocked payload (wait_next) is implicitly discarded.
                     // Consume the matched bits.
                     inner.bits &= !matched;
                     // Store the matched bits for the task to read on resume.
@@ -138,15 +141,18 @@ impl EventGroup {
             prev = core::ptr::null_mut();
             cur = inner.wait_all_head;
             while !cur.is_null() {
-                let next = (*cur).wait_next;
+                let TaskState::Blocked { wait_next: next } = (*cur).state else {
+                    unreachable!()
+                };
                 let task_mask = (*cur).wait_ptr as u32;
                 if inner.bits & task_mask == task_mask {
                     if prev.is_null() {
                         inner.wait_all_head = next;
-                    } else {
-                        (*prev).wait_next = next;
+                    } else if let TaskState::Blocked { ref mut wait_next } = (*prev).state {
+                        *wait_next = next;
                     }
-                    (*cur).wait_next = core::ptr::null_mut();
+                    // Matched node transitions to Ready via unblock(); the
+                    // Blocked payload (wait_next) is implicitly discarded.
                     inner.bits &= !task_mask;
                     if scheduler::unblock(cur) {
                         preempt = true;
@@ -213,8 +219,7 @@ impl EventGroup {
                     mask
                 );
                 (*crate::CURRENT).wait_ptr = mask as usize;
-                scheduler::wait_list_push(&mut inner.wait_any_head, crate::CURRENT);
-                scheduler::block_current();
+                scheduler::block_and_push(&mut inner.wait_any_head, crate::CURRENT);
                 must_block = true;
             }
         });
@@ -254,8 +259,7 @@ impl EventGroup {
                     mask
                 );
                 (*crate::CURRENT).wait_ptr = mask as usize;
-                scheduler::wait_list_push(&mut inner.wait_all_head, crate::CURRENT);
-                scheduler::block_current();
+                scheduler::block_and_push(&mut inner.wait_all_head, crate::CURRENT);
                 must_block = true;
             }
         });
@@ -283,16 +287,19 @@ impl EventGroup {
             let mut prev: *mut Tcb = core::ptr::null_mut();
             let mut cur = inner.wait_any_head;
             while !cur.is_null() {
-                let next = (*cur).wait_next;
+                let TaskState::Blocked { wait_next: next } = (*cur).state else {
+                    unreachable!()
+                };
                 let task_mask = (*cur).wait_ptr as u32;
                 let matched = inner.bits & task_mask;
                 if matched != 0 {
                     if prev.is_null() {
                         inner.wait_any_head = next;
-                    } else {
-                        (*prev).wait_next = next;
+                    } else if let TaskState::Blocked { ref mut wait_next } = (*prev).state {
+                        *wait_next = next;
                     }
-                    (*cur).wait_next = core::ptr::null_mut();
+                    // Matched node transitions to Ready via unblock(); the
+                    // Blocked payload (wait_next) is implicitly discarded.
                     inner.bits &= !matched;
                     (*cur).wait_ptr = matched as usize;
                     if scheduler::unblock(cur) {
@@ -308,15 +315,18 @@ impl EventGroup {
             prev = core::ptr::null_mut();
             cur = inner.wait_all_head;
             while !cur.is_null() {
-                let next = (*cur).wait_next;
+                let TaskState::Blocked { wait_next: next } = (*cur).state else {
+                    unreachable!()
+                };
                 let task_mask = (*cur).wait_ptr as u32;
                 if inner.bits & task_mask == task_mask {
                     if prev.is_null() {
                         inner.wait_all_head = next;
-                    } else {
-                        (*prev).wait_next = next;
+                    } else if let TaskState::Blocked { ref mut wait_next } = (*prev).state {
+                        *wait_next = next;
                     }
-                    (*cur).wait_next = core::ptr::null_mut();
+                    // Matched node transitions to Ready via unblock(); the
+                    // Blocked payload (wait_next) is implicitly discarded.
                     inner.bits &= !task_mask;
                     if scheduler::unblock(cur) {
                         preempt = true;

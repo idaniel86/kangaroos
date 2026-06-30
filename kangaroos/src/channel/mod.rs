@@ -129,8 +129,7 @@ impl<T: Send, const N: usize> Channel<T, N> {
                 // SAFETY: `src` lives for the lifetime of send_impl; the task
                 // is blocked (stack frozen) until the receiver copies it out.
                 (*crate::CURRENT).wait_ptr = src.as_ptr() as usize;
-                scheduler::wait_list_push(&mut inner.send_head, crate::CURRENT);
-                scheduler::block_current();
+                scheduler::block_and_push(&mut inner.send_head, crate::CURRENT);
                 must_block = true;
             }
         });
@@ -225,8 +224,7 @@ impl<T: Send, const N: usize> Channel<T, N> {
                 // SAFETY: `slot` lives for the lifetime of recv_impl; the task
                 // is blocked (stack frozen) until the sender fills it.
                 (*crate::CURRENT).wait_ptr = slot.as_mut_ptr() as usize;
-                scheduler::wait_list_push(&mut inner.recv_head, crate::CURRENT);
-                scheduler::block_current();
+                scheduler::block_and_push(&mut inner.recv_head, crate::CURRENT);
                 must_block = true;
             }
         });

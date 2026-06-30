@@ -156,8 +156,7 @@ impl<T: Send, const N: usize> Pool<T, N> {
                 // SAFETY: `src` outlives alloc_blocking; the stack is frozen
                 // while this task is blocked.
                 (*crate::CURRENT).wait_ptr = src.as_ptr() as usize;
-                scheduler::wait_list_push(&mut inner.wait_head, crate::CURRENT);
-                scheduler::block_current();
+                scheduler::block_and_push(&mut inner.wait_head, crate::CURRENT);
                 must_block = true;
             }
         });
