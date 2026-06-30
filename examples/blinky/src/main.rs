@@ -42,7 +42,7 @@ fn task_b(secs: u64) -> ! {
 /// lm3s811evb (QEMU Cortex-M3) runs at 8 MHz.
 /// Change `cpu_hz` to match your board's CPU clock.
 #[main(cpu_hz = 8_000_000)]
-fn main(spawner: &mut Spawner) {
+fn main(spawner: Spawner) {
     spawner.spawn(task_a(1));
     spawner.spawn(task_b(1));
 }
