@@ -202,7 +202,7 @@ unsafe extern "C" fn svc_first_task_sp() -> usize {
 
         let mut t = crate::ALL_TASKS;
         while !t.is_null() {
-            if matches!((*t).state, TaskState::Ready) && (*t).priority < best_prio {
+            if matches!((*t).state, TaskState::Ready { .. }) && (*t).priority < best_prio {
                 best_prio = (*t).priority;
                 best = t;
             }
@@ -211,7 +211,8 @@ unsafe extern "C" fn svc_first_task_sp() -> usize {
 
         crate::CURRENT = best;
         let task = &mut *best;
-        task.state = TaskState::Running;
+        let TaskState::Ready { slice_remaining } = task.state else { unreachable!() };
+        task.state = TaskState::Running { slice_remaining };
 
         // Arm the hardware stack-limit register before the task starts.
         core::arch::asm!(
@@ -240,14 +241,15 @@ unsafe extern "C" fn pendsv_save_and_switch(current_sp: usize) -> usize {
         let old = crate::CURRENT;
         (*old).sp = current_sp;
 
-        if (*old).state == TaskState::Running {
-            (*old).state = TaskState::Ready;
+        if let TaskState::Running { slice_remaining } = (*old).state {
+            (*old).state = TaskState::Ready { slice_remaining };
         }
 
         let next = crate::kernel::scheduler::find_next();
         crate::CURRENT = next;
         let task = &mut *next;
-        task.state = TaskState::Running;
+        let TaskState::Ready { slice_remaining } = task.state else { unreachable!() };
+        task.state = TaskState::Running { slice_remaining };
 
         // Update PSPLIM to the incoming task's stack base.
         // This executes before `msr psp, r0` in the PendSV stub, so the new

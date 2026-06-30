@@ -38,7 +38,7 @@ pub(crate) fn find_next() -> *mut Tcb {
         // First task seen at a given priority wins the round-robin tiebreak.
         let mut t = start;
         while !t.is_null() {
-            if matches!((*t).state, TaskState::Ready | TaskState::Running)
+            if matches!((*t).state, TaskState::Ready { .. } | TaskState::Running { .. })
                 && (best.is_null() || (*t).priority < best_prio)
             {
                 best_prio = (*t).priority;
@@ -53,7 +53,7 @@ pub(crate) fn find_next() -> *mut Tcb {
         if !current.is_null() {
             let mut t = list_head;
             while !t.is_null() && t != start {
-                if matches!((*t).state, TaskState::Ready | TaskState::Running)
+                if matches!((*t).state, TaskState::Ready { .. } | TaskState::Running { .. })
                     && (best.is_null() || (*t).priority < best_prio)
                 {
                     best_prio = (*t).priority;
@@ -88,7 +88,7 @@ pub(crate) fn tick() -> bool {
         let current = crate::CURRENT;
 
         // Guard: scheduler not yet started (svc_first_task_sp has not run yet).
-        if current.is_null() || !matches!((*current).state, TaskState::Running) {
+        if current.is_null() || !matches!((*current).state, TaskState::Running { .. }) {
             return false;
         }
 
@@ -108,10 +108,10 @@ pub(crate) fn tick() -> bool {
             if let TaskState::Sleeping(deadline) = (*t).state
                 && now >= deadline
             {
-                (*t).state = TaskState::Ready;
+                (*t).state = TaskState::Ready { slice_remaining: (*t).time_slice };
             }
             // Covers both freshly-woken sleepers and tasks already ready.
-            if matches!((*t).state, TaskState::Ready) && (*t).priority < cur_prio {
+            if matches!((*t).state, TaskState::Ready { .. }) && (*t).priority < cur_prio {
                 should_preempt = true;
                 // Do not break — remaining sleepers must still be woken.
             }
@@ -124,17 +124,26 @@ pub(crate) fn tick() -> bool {
 
         // Decrement the running task's time slice.
         let cur = &mut *current;
-        if cur.slice_remaining > 0 {
-            cur.slice_remaining -= 1;
-        }
+        let expired = if let TaskState::Running { ref mut slice_remaining } = cur.state {
+            if *slice_remaining > 0 {
+                *slice_remaining -= 1;
+            }
+            if *slice_remaining == 0 {
+                *slice_remaining = cur.time_slice;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
 
         // On slice expiry, rotate if an equal-priority peer is ready.
-        if cur.slice_remaining == 0 {
-            cur.slice_remaining = cur.time_slice;
+        if expired {
             let mut t = crate::ALL_TASKS;
             while !t.is_null() {
                 if t != current
-                    && matches!((*t).state, TaskState::Ready)
+                    && matches!((*t).state, TaskState::Ready { .. })
                     && (*t).priority == cur_prio
                 {
                     return true;
@@ -178,7 +187,7 @@ pub(crate) unsafe fn block_current() {
 /// Must be called inside `interrupt::free`.
 pub(crate) unsafe fn unblock(tcb: *mut Tcb) -> bool {
     unsafe {
-        (*tcb).state = TaskState::Ready;
+        (*tcb).state = TaskState::Ready { slice_remaining: (*tcb).time_slice };
         (*tcb).priority < (*crate::CURRENT).priority
     }
 }
@@ -268,7 +277,7 @@ unsafe extern "C" fn svc_first_task_sp() -> usize {
 
         let mut t = crate::ALL_TASKS;
         while !t.is_null() {
-            if matches!((*t).state, TaskState::Ready) && (*t).priority < best_prio {
+            if matches!((*t).state, TaskState::Ready { .. }) && (*t).priority < best_prio {
                 best_prio = (*t).priority;
                 best = t;
             }
@@ -276,7 +285,8 @@ unsafe extern "C" fn svc_first_task_sp() -> usize {
         }
 
         crate::CURRENT = best;
-        (*best).state = TaskState::Running;
+        let TaskState::Ready { slice_remaining } = (*best).state else { unreachable!() };
+        (*best).state = TaskState::Running { slice_remaining };
         (*best).sp
     }
 }
@@ -298,13 +308,14 @@ unsafe extern "C" fn pendsv_save_and_switch(current_sp: usize) -> usize {
         let old = crate::CURRENT;
         (*old).sp = current_sp;
 
-        if (*old).state == TaskState::Running {
-            (*old).state = TaskState::Ready;
+        if let TaskState::Running { slice_remaining } = (*old).state {
+            (*old).state = TaskState::Ready { slice_remaining };
         }
 
         let next = find_next();
         crate::CURRENT = next;
-        (*next).state = TaskState::Running;
+        let TaskState::Ready { slice_remaining } = (*next).state else { unreachable!() };
+        (*next).state = TaskState::Running { slice_remaining };
         (*next).sp
     }
 }
@@ -358,9 +369,9 @@ mod tests {
     fn find_next_picks_highest_priority_ready() {
         let _lock = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_tasks!(tasks, 3, 0);
-        tasks[0].state = TaskState::Running;
+        tasks[0].state = TaskState::Running { slice_remaining: 0 };
         tasks[0].priority = 5;
-        tasks[1].state = TaskState::Ready;
+        tasks[1].state = TaskState::Ready { slice_remaining: 0 };
         tasks[1].priority = 3; // wins
         tasks[2].state = TaskState::Blocked;
         tasks[2].priority = 1; // blocked
@@ -371,11 +382,11 @@ mod tests {
     fn find_next_round_robin_equal_priority() {
         let _lock = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_tasks!(tasks, 3, 0);
-        tasks[0].state = TaskState::Running;
+        tasks[0].state = TaskState::Running { slice_remaining: 0 };
         tasks[0].priority = 5;
-        tasks[1].state = TaskState::Ready;
+        tasks[1].state = TaskState::Ready { slice_remaining: 0 };
         tasks[1].priority = 5;
-        tasks[2].state = TaskState::Ready;
+        tasks[2].state = TaskState::Ready { slice_remaining: 0 };
         tasks[2].priority = 5;
         // Search starts at current+1 = 1, so task 1 is the round-robin winner.
         assert_eq!(find_next(), core::ptr::addr_of_mut!(tasks[1]));
@@ -385,11 +396,11 @@ mod tests {
     fn find_next_skips_non_ready() {
         let _lock = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_tasks!(tasks, 3, 0);
-        tasks[0].state = TaskState::Running;
+        tasks[0].state = TaskState::Running { slice_remaining: 0 };
         tasks[0].priority = 5;
         tasks[1].state = TaskState::Blocked;
         tasks[1].priority = 0; // highest prio but blocked
-        tasks[2].state = TaskState::Ready;
+        tasks[2].state = TaskState::Ready { slice_remaining: 0 };
         tasks[2].priority = 5;
         // Only task 2 is ready → it must be selected despite lower prio than task 1.
         assert_eq!(find_next(), core::ptr::addr_of_mut!(tasks[2]));
@@ -399,10 +410,9 @@ mod tests {
     fn tick_wakes_sleeping_task_and_requests_preempt() {
         let _lock = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_tasks!(tasks, 2, 0);
-        tasks[0].state = TaskState::Running;
+        tasks[0].state = TaskState::Running { slice_remaining: 10 };
         tasks[0].priority = 5;
         tasks[0].time_slice = 10;
-        tasks[0].slice_remaining = 10;
         tasks[1].state = TaskState::Sleeping(5);
         tasks[1].priority = 3; // higher prio
         unsafe {
@@ -413,17 +423,16 @@ mod tests {
             preempt,
             "expected preemption when a higher-prio task is woken"
         );
-        assert!(matches!(tasks[1].state, TaskState::Ready));
+        assert!(matches!(tasks[1].state, TaskState::Ready { .. }));
     }
 
     #[test]
     fn tick_does_not_preempt_when_lower_prio_sleeper_wakes() {
         let _lock = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_tasks!(tasks, 2, 0);
-        tasks[0].state = TaskState::Running;
+        tasks[0].state = TaskState::Running { slice_remaining: 10 };
         tasks[0].priority = 2; // higher prio
         tasks[0].time_slice = 10;
-        tasks[0].slice_remaining = 10;
         tasks[1].state = TaskState::Sleeping(5);
         tasks[1].priority = 5; // lower prio
         unsafe {
@@ -431,18 +440,17 @@ mod tests {
         }
         let preempt = tick();
         assert!(!preempt, "lower-prio wakeup must not trigger preemption");
-        assert!(matches!(tasks[1].state, TaskState::Ready));
+        assert!(matches!(tasks[1].state, TaskState::Ready { .. }));
     }
 
     #[test]
     fn tick_slice_expiry_rotates_equal_prio() {
         let _lock = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_tasks!(tasks, 2, 0);
-        tasks[0].state = TaskState::Running;
+        tasks[0].state = TaskState::Running { slice_remaining: 1 };
         tasks[0].priority = 5;
         tasks[0].time_slice = 1;
-        tasks[0].slice_remaining = 1;
-        tasks[1].state = TaskState::Ready;
+        tasks[1].state = TaskState::Ready { slice_remaining: 0 };
         tasks[1].priority = 5; // same prio peer
         unsafe {
             TICK = 0;
@@ -455,10 +463,9 @@ mod tests {
     fn tick_increments_global_counter() {
         let _lock = SCHED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         with_tasks!(tasks, 1, 0);
-        tasks[0].state = TaskState::Running;
+        tasks[0].state = TaskState::Running { slice_remaining: 100 };
         tasks[0].priority = 5;
         tasks[0].time_slice = 100;
-        tasks[0].slice_remaining = 100;
         unsafe {
             TICK = 999;
         }

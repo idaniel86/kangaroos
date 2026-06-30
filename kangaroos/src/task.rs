@@ -111,11 +111,10 @@ pub(crate) unsafe fn spawn_into(
 
         let tcb = &mut *tcb_ptr;
         tcb.sp = sp;
-        tcb.state = TaskState::Ready;
+        tcb.state = TaskState::Ready { slice_remaining: time_slice };
         tcb.priority = priority;
         tcb.base_priority = priority;
         tcb.time_slice = time_slice;
-        tcb.slice_remaining = time_slice;
         tcb.stack_base = stack_ptr as usize;
         tcb.name = name;
         tcb.wait_next = core::ptr::null_mut();
@@ -144,7 +143,9 @@ pub(crate) unsafe fn spawn_into(
 /// immediately.
 pub fn yield_now() {
     crate::port::interrupt_free(|| unsafe {
-        (*crate::CURRENT).slice_remaining = 0;
+        if let TaskState::Running { ref mut slice_remaining } = (*crate::CURRENT).state {
+            *slice_remaining = 0;
+        }
     });
     #[cfg(feature = "defmt")]
     defmt::debug!("task '{}': yielding", unsafe { (*crate::CURRENT).name });
